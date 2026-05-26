@@ -4,7 +4,8 @@ import { featureLayer } from 'esri-leaflet'
 import {
   LAYER_URLS, getEFColor, makeWhere,
   getSpcColor, getAlertColor, getLsrColor,
-  generateRadarFrames, radarTileUrl, timeToFrameId,
+  generateRadarFrames, frameIdToIso, timeToIso, msToIso,
+  IEM_WMS_URL, IEM_WMS_LAYER,
   FILTERED_ALERT_TYPES,
 } from '../constants'
 import 'leaflet/dist/leaflet.css'
@@ -43,6 +44,19 @@ function getCoords(geometry) {
   return []
 }
 
+// Cumulative Euclidean distances along a coordinate array [[lon,lat],...]
+function buildCumDists(coords) {
+  let total = 0
+  const cumDists = [0]
+  for (let i = 1; i < coords.length; i++) {
+    const dx = coords[i][0] - coords[i - 1][0]
+    const dy = coords[i][1] - coords[i - 1][1]
+    total += Math.sqrt(dx * dx + dy * dy)
+    cumDists.push(total)
+  }
+  return { cumDists, totalDist: total }
+}
+
 export default function MapView({
   layers, dateRange, onFeatureSelect, selectedFeature, onMapReady,
   spcOutlook, alertsOverlay, alertTypes, lsrOverlay,
@@ -61,9 +75,10 @@ export default function MapView({
   const lsrAllDataRef = useRef(null)
   const radarLayerRef = useRef(null)
   const radarFrameIdxRef = useRef(0)
-  const pathAnimLayerRef = useRef(null)
-  const pathAnimHeadRef = useRef(null)
-  const pathDamageMarkersRef = useRef([])
+  // Path animation overlays
+  const pathAnimLayerRef = useRef(null)   // growing polyline
+  const pathAnimHeadRef = useRef(null)    // moving head marker
+  const pathAnimPointsRef = useRef([])    // [{marker, trackRatio}] actual survey points
   const animStepRef = useRef(0)
   const animIntervalRef = useRef(null)
   const pathAnimActiveRef = useRef(false)
@@ -71,6 +86,7 @@ export default function MapView({
 
   useEffect(() => { pathAnimActiveRef.current = pathAnim.active }, [pathAnim.active])
 
+  // Filter LSR layer to events up to maxMs (used during path animation)
   const filterLsrByTime = useCallback((maxMs) => {
     const layer = lsrGeoLayerRef.current
     const data = lsrAllDataRef.current
@@ -84,36 +100,40 @@ export default function MapView({
     if (filtered.length) layer.addData({ type: 'FeatureCollection', features: filtered })
   }, [])
 
+  // Apply one animation frame: advance path, move head, sync radar + LSR + survey points
   const applyAnimFrame = useCallback((step, totalSteps, feature) => {
     const coords = getCoords(feature?.geometry)
     if (!coords.length || !mapRef.current) return
     const ratio = totalSteps > 0 ? step / totalSteps : 0
-    const numPts = step === 0 ? 1 : Math.max(2, Math.ceil(ratio * coords.length))
 
+    // Reveal path coordinates proportionally
+    const numPts = step === 0 ? 1 : Math.max(2, Math.ceil(ratio * coords.length))
     const latLngs = coords.slice(0, numPts).map(([lon, lat]) => [lat, lon])
     if (pathAnimLayerRef.current) pathAnimLayerRef.current.setLatLngs(latLngs)
 
+    // Move the head marker to the current leading point
     const headCoord = coords[Math.min(numPts - 1, coords.length - 1)]
     if (pathAnimHeadRef.current && headCoord) {
       pathAnimHeadRef.current.setLatLng([headCoord[1], headCoord[0]])
     }
 
-    // Sync radar time
+    // Show survey points that fall at or before the current animation position
+    const map = mapRef.current
+    pathAnimPointsRef.current.forEach(({ marker, trackRatio }) => {
+      if (ratio >= trackRatio) {
+        if (!map.hasLayer(marker)) marker.addTo(map)
+      } else {
+        if (map.hasLayer(marker)) map.removeLayer(marker)
+      }
+    })
+
+    // Sync radar and LSR to the interpolated wall-clock time of the tornado
     const startMs = toMs(feature?.properties?.starttime)
     const endMs = toMs(feature?.properties?.endtime)
     if (startMs !== null && endMs !== null && endMs > startMs) {
       const currentMs = startMs + ratio * (endMs - startMs)
       if (radarLayerRef.current) {
-        const d = new Date(currentMs)
-        const min5 = Math.floor(d.getUTCMinutes() / 5) * 5
-        const frameId = [
-          String(d.getUTCFullYear()),
-          String(d.getUTCMonth() + 1).padStart(2, '0'),
-          String(d.getUTCDate()).padStart(2, '0'),
-          String(d.getUTCHours()).padStart(2, '0'),
-          String(min5).padStart(2, '0'),
-        ].join('')
-        radarLayerRef.current.setUrl(radarTileUrl(frameId))
+        radarLayerRef.current.setParams({ TIME: msToIso(currentMs) })
       }
       filterLsrByTime(currentMs)
     }
@@ -159,27 +179,12 @@ export default function MapView({
 
         try {
           const hl = L.geoJSON(feature, {
-            style: {
-              color,
-              weight: type === 'lines' ? 5 : 2,
-              opacity: 1,
-              fillColor: color,
-              fillOpacity: 0.12,
-            },
+            style: { color, weight: type === 'lines' ? 5 : 2, opacity: 1, fillColor: color, fillOpacity: 0.12 },
             pointToLayer: (_, latlng) =>
-              L.circleMarker(latlng, {
-                radius: 14,
-                color,
-                weight: 2,
-                opacity: 1,
-                fillOpacity: 0,
-                className: 'selected-ring',
-              }),
+              L.circleMarker(latlng, { radius: 14, color, weight: 2, opacity: 1, fillOpacity: 0, className: 'selected-ring' }),
           }).addTo(map)
           highlightRef.current = hl
-        } catch {
-          // null geometry
-        }
+        } catch {}
 
         onFeatureSelect({ feature, type })
       })
@@ -195,7 +200,7 @@ export default function MapView({
       precision: 4,
     })
 
-    // Simple SVG circle markers — no box-shadow, no divIcon overhead
+    // Plain SVG circleMarkers — no divIcon, no box-shadow, much lighter
     const pointsLayer = makeLayer(LAYER_URLS.points, 'points', {
       fields: POINT_FIELDS,
       pointToLayer: (gj, latlng) =>
@@ -222,9 +227,7 @@ export default function MapView({
     layerRefs.current = { lines: linesLayer, points: pointsLayer, polygons: polygonsLayer }
     mapRef.current = map
 
-    onMapReady({
-      flyTo: (lat, lon, zoom = 8) => map.flyTo([lat, lon], zoom, { duration: 1.5 }),
-    })
+    onMapReady({ flyTo: (lat, lon, zoom = 8) => map.flyTo([lat, lon], zoom, { duration: 1.5 }) })
 
     return () => {
       map.remove()
@@ -268,10 +271,7 @@ export default function MapView({
   // ── SPC layer ─────────────────────────────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current
-    if (spcLayerRef.current) {
-      if (map) map.removeLayer(spcLayerRef.current)
-      spcLayerRef.current = null
-    }
+    if (spcLayerRef.current) { if (map) map.removeLayer(spcLayerRef.current); spcLayerRef.current = null }
     if (!spcOutlook.enabled || !spcOutlook.date || !spcOutlook.time || !map) return
 
     const controller = new AbortController()
@@ -292,10 +292,7 @@ export default function MapView({
           onEachFeature: (feature, lyr) => {
             const label = feature.properties?.LABEL ?? feature.properties?.label ?? 'Unknown'
             const label2 = feature.properties?.LABEL2 ?? feature.properties?.label2 ?? ''
-            lyr.bindTooltip(
-              `<b>SPC: ${label}</b>${label2 ? `<br>${label2}` : ''}`,
-              { sticky: true, className: 'map-tooltip' }
-            )
+            lyr.bindTooltip(`<b>SPC: ${label}</b>${label2 ? `<br>${label2}` : ''}`, { sticky: true, className: 'map-tooltip' })
           },
         }).addTo(mapRef.current)
         spcLayerRef.current = layer
@@ -305,13 +302,10 @@ export default function MapView({
     return () => controller.abort()
   }, [spcOutlook])
 
-  // ── NWS Alerts — fetch and cache ─────────────────────────────────────────
+  // ── NWS Alerts — fetch, cache, and apply type filter ─────────────────────
   useEffect(() => {
     const map = mapRef.current
-    if (alertsLayerRef.current) {
-      if (map) map.removeLayer(alertsLayerRef.current)
-      alertsLayerRef.current = null
-    }
+    if (alertsLayerRef.current) { if (map) map.removeLayer(alertsLayerRef.current); alertsLayerRef.current = null }
     alertsAllDataRef.current = null
     if (!alertsOverlay.enabled || !alertsOverlay.date || !map) return
 
@@ -326,17 +320,11 @@ export default function MapView({
       .then((r) => r.json())
       .then((data) => {
         if (!mapRef.current || controller.signal.aborted) return
-
-        // Only keep the 19 alert types from the screenshot
         const allFeatures = (data.features ?? []).filter(
           (f) => f.geometry && FILTERED_ALERT_TYPES.includes(f.properties?.event ?? '')
         )
         alertsAllDataRef.current = allFeatures
-
-        // Apply current alertTypes filter
-        const currentAlertTypes = alertTypes
-        const features = allFeatures.filter((f) => currentAlertTypes.has(f.properties?.event ?? ''))
-
+        const features = allFeatures.filter((f) => alertTypes.has(f.properties?.event ?? ''))
         alertsLayerRef.current = L.geoJSON({ type: 'FeatureCollection', features }, {
           style: (feature) => {
             const color = getAlertColor(feature.properties?.event ?? '')
@@ -345,24 +333,19 @@ export default function MapView({
           onEachFeature: (feature, lyr) => {
             const event = feature.properties?.event ?? 'Alert'
             const area = feature.properties?.areaDesc ?? ''
-            lyr.bindTooltip(
-              `<b>${event}</b>${area ? `<br>${area}` : ''}`,
-              { sticky: true, className: 'map-tooltip' }
-            )
+            lyr.bindTooltip(`<b>${event}</b>${area ? `<br>${area}` : ''}`, { sticky: true, className: 'map-tooltip' })
           },
         }).addTo(mapRef.current)
       })
       .catch(() => {})
 
     return () => controller.abort()
-  }, [alertsOverlay]) // alertTypes handled by separate effect below
+  }, [alertsOverlay])
 
   // ── Alert type filter — client-side, no re-fetch ──────────────────────────
   useEffect(() => {
-    const map = mapRef.current
     const allData = alertsAllDataRef.current
-    if (!map || !alertsLayerRef.current || !allData) return
-
+    if (!mapRef.current || !alertsLayerRef.current || !allData) return
     alertsLayerRef.current.clearLayers()
     const features = allData.filter((f) => alertTypes.has(f.properties?.event ?? ''))
     alertsLayerRef.current.addData({ type: 'FeatureCollection', features })
@@ -371,24 +354,14 @@ export default function MapView({
   // ── LSR layer ─────────────────────────────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current
-    if (lsrGeoLayerRef.current) {
-      if (map) map.removeLayer(lsrGeoLayerRef.current)
-      lsrGeoLayerRef.current = null
-    }
+    if (lsrGeoLayerRef.current) { if (map) map.removeLayer(lsrGeoLayerRef.current); lsrGeoLayerRef.current = null }
     lsrAllDataRef.current = null
     if (!lsrOverlay.enabled || !lsrOverlay.date || !map) return
 
     lsrGeoLayerRef.current = L.geoJSON(null, {
       pointToLayer: (feature, latlng) => {
         const color = getLsrColor(feature.properties?.typetext ?? '')
-        return L.circleMarker(latlng, {
-          radius: 6,
-          fillColor: color,
-          color: '#000',
-          weight: 1,
-          opacity: 1,
-          fillOpacity: 0.9,
-        })
+        return L.circleMarker(latlng, { radius: 6, fillColor: color, color: '#000', weight: 1, opacity: 1, fillOpacity: 0.9 })
       },
       onEachFeature: (feature, lyr) => {
         const p = feature.properties ?? {}
@@ -411,10 +384,7 @@ export default function MapView({
       .then((data) => {
         if (!mapRef.current || controller.signal.aborted || !lsrGeoLayerRef.current) return
         lsrAllDataRef.current = data
-        // If animation is active, keep hidden (animation will populate progressively)
-        if (!pathAnimActiveRef.current) {
-          lsrGeoLayerRef.current.addData(data)
-        }
+        if (!pathAnimActiveRef.current) lsrGeoLayerRef.current.addData(data)
       })
       .catch(() => {})
 
@@ -428,7 +398,7 @@ export default function MapView({
     }
   }, [lsrOverlay])
 
-  // ── LSR visibility when animation active/inactive ─────────────────────────
+  // ── LSR visibility when animation starts/stops ────────────────────────────
   useEffect(() => {
     const layer = lsrGeoLayerRef.current
     const data = lsrAllDataRef.current
@@ -437,44 +407,44 @@ export default function MapView({
       layer.clearLayers()
       layer.addData(data)
     } else {
-      layer.clearLayers() // animation will re-add progressively
+      layer.clearLayers()
     }
   }, [pathAnim.active])
 
-  // ── Radar layer — create when enabled ────────────────────────────────────
+  // ── Radar — IEM NEXRAD WMS (supports TIME parameter for historical data) ───
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
-    if (radarLayerRef.current) {
-      map.removeLayer(radarLayerRef.current)
-      radarLayerRef.current = null
-    }
+    if (radarLayerRef.current) { map.removeLayer(radarLayerRef.current); radarLayerRef.current = null }
     if (!radarOverlay.enabled || !radarOverlay.date) return
 
-    const frameId = timeToFrameId(radarOverlay.date, radarOverlay.time)
-    if (!frameId) return
-    radarLayerRef.current = L.tileLayer(radarTileUrl(frameId), {
-      opacity: 0.65,
-      zIndex: 5,
-    }).addTo(map)
-  }, [radarOverlay.enabled, radarOverlay.date]) // time handled below
+    const isoStr = timeToIso(radarOverlay.date, radarOverlay.time)
+    if (!isoStr) return
 
-  // ── Radar URL sync when time changes ─────────────────────────────────────
+    radarLayerRef.current = L.tileLayer.wms(IEM_WMS_URL, {
+      layers: IEM_WMS_LAYER,
+      format: 'image/png',
+      transparent: true,
+      version: '1.1.1',
+      TIME: isoStr,
+      opacity: 0.65,
+    }).addTo(map)
+  }, [radarOverlay.enabled, radarOverlay.date])
+
+  // ── Radar time sync when time changes (no layer recreation) ──────────────
   useEffect(() => {
     if (!radarLayerRef.current || !radarOverlay.enabled) return
-    const frameId = timeToFrameId(radarOverlay.date, radarOverlay.time)
-    if (frameId) radarLayerRef.current.setUrl(radarTileUrl(frameId))
+    const isoStr = timeToIso(radarOverlay.date, radarOverlay.time)
+    if (isoStr) radarLayerRef.current.setParams({ TIME: isoStr })
   }, [radarOverlay.time, radarOverlay.enabled, radarOverlay.date])
 
-  // ── Radar playback ────────────────────────────────────────────────────────
+  // ── Radar standalone playback loop ────────────────────────────────────────
   useEffect(() => {
-    if (!radarOverlay.playing || !radarOverlay.enabled) return
-    if (pathAnim.playing) return // path animation owns radar during its playback
+    if (!radarOverlay.playing || !radarOverlay.enabled || pathAnim.playing) return
 
     const frames = generateRadarFrames(radarOverlay.date)
     if (!frames.length) return
 
-    // Seed frame index from current time setting
     const [hh = '0', mm = '0'] = (radarOverlay.time || '00:00').split(':')
     radarFrameIdxRef.current = Math.min(
       Math.floor((parseInt(hh) * 60 + parseInt(mm)) / 5),
@@ -483,24 +453,25 @@ export default function MapView({
 
     const interval = setInterval(() => {
       radarFrameIdxRef.current = (radarFrameIdxRef.current + 1) % frames.length
-      const frameId = frames[radarFrameIdxRef.current]
-      if (radarLayerRef.current) radarLayerRef.current.setUrl(radarTileUrl(frameId))
+      if (radarLayerRef.current) {
+        radarLayerRef.current.setParams({ TIME: frameIdToIso(frames[radarFrameIdxRef.current]) })
+      }
     }, radarOverlay.speed)
 
     return () => clearInterval(interval)
   }, [radarOverlay.playing, radarOverlay.enabled, radarOverlay.date, radarOverlay.speed])
 
-  // ── Path animation — setup layers when feature changes ───────────────────
+  // ── Path animation — setup overlays + fetch full-res survey points ────────
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
 
-    // Always clean up first
+    // Clean up previous animation state
     if (animIntervalRef.current) { clearInterval(animIntervalRef.current); animIntervalRef.current = null }
     if (pathAnimLayerRef.current) { map.removeLayer(pathAnimLayerRef.current); pathAnimLayerRef.current = null }
     if (pathAnimHeadRef.current) { map.removeLayer(pathAnimHeadRef.current); pathAnimHeadRef.current = null }
-    pathDamageMarkersRef.current.forEach((m) => { try { map.removeLayer(m) } catch {} })
-    pathDamageMarkersRef.current = []
+    pathAnimPointsRef.current.forEach(({ marker }) => { try { map.removeLayer(marker) } catch {} })
+    pathAnimPointsRef.current = []
 
     if (!pathAnim.active || !pathAnim.feature?.geometry) return
 
@@ -510,7 +481,10 @@ export default function MapView({
     const color = getEFColor(pathAnim.feature.properties)
     animStepRef.current = 0
 
+    // Path polyline (starts empty; filled by applyAnimFrame)
     pathAnimLayerRef.current = L.polyline([], { color, weight: 5, opacity: 0.95 }).addTo(map)
+
+    // Moving head indicator
     pathAnimHeadRef.current = L.circleMarker([coords[0][1], coords[0][0]], {
       radius: 9,
       fillColor: color,
@@ -518,6 +492,79 @@ export default function MapView({
       weight: 2.5,
       fillOpacity: 1,
     }).addTo(map)
+
+    // Fetch actual NOAA survey points for this storm date, clipped to the track bbox
+    const stormMs = toMs(pathAnim.feature.properties?.stormdate ?? pathAnim.feature.properties?.starttime)
+    if (stormMs) {
+      const dateStr = new Date(stormMs).toISOString().slice(0, 10)
+      const lons = coords.map((c) => c[0])
+      const lats = coords.map((c) => c[1])
+      const pad = 0.3
+      const xmin = Math.min(...lons) - pad
+      const xmax = Math.max(...lons) + pad
+      const ymin = Math.min(...lats) - pad
+      const ymax = Math.max(...lats) + pad
+
+      const where = `stormdate >= timestamp '${dateStr} 00:00:00' AND stormdate <= timestamp '${dateStr} 23:59:59'`
+      const qUrl = [
+        `${LAYER_URLS.points}/query`,
+        `?where=${encodeURIComponent(where)}`,
+        `&geometry=${xmin},${ymin},${xmax},${ymax}`,
+        `&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects`,
+        `&outFields=OBJECTID,efscale,efnum,damage_txt&f=geojson&outSR=4326&returnGeometry=true`,
+      ].join('')
+
+      fetch(qUrl)
+        .then((r) => r.json())
+        .then((data) => {
+          if (!mapRef.current || !pathAnimActiveRef.current) return
+          const { cumDists, totalDist } = buildCumDists(coords)
+          const newPoints = []
+
+          ;(data.features ?? []).forEach((f) => {
+            if (!f.geometry?.coordinates) return
+            const [plon, plat] = f.geometry.coordinates
+
+            // Find which coordinate along the track this point is nearest to
+            let nearestI = 0
+            let minDist2 = Infinity
+            for (let i = 0; i < coords.length; i++) {
+              const dx = coords[i][0] - plon
+              const dy = coords[i][1] - plat
+              const d2 = dx * dx + dy * dy
+              if (d2 < minDist2) { minDist2 = d2; nearestI = i }
+            }
+            const trackRatio = totalDist > 0 ? cumDists[nearestI] / totalDist : 0
+
+            const efColor = getEFColor(f.properties)
+            const marker = L.circleMarker([plat, plon], {
+              radius: 7,
+              fillColor: efColor,
+              color: '#fff',
+              weight: 1.5,
+              fillOpacity: 0.92,
+            })
+            const label = f.properties?.efscale ? f.properties.efscale.toString().toUpperCase() : 'Survey'
+            const desc = f.properties?.damage_txt ? `<br>${f.properties.damage_txt.slice(0, 60)}…` : ''
+            marker.bindTooltip(`<b>${label} — Survey Point</b>${desc}`, { sticky: true, className: 'map-tooltip' })
+
+            newPoints.push({ marker, trackRatio })
+          })
+
+          // Sort by track position so they reveal in geographic order
+          newPoints.sort((a, b) => a.trackRatio - b.trackRatio)
+          pathAnimPointsRef.current = newPoints
+
+          // If animation already advanced past some points, show them now
+          if (animStepRef.current > 0) {
+            const ratio = animStepRef.current / pathAnim.totalSteps
+            newPoints.forEach(({ marker, trackRatio }) => {
+              if (ratio >= trackRatio) marker.addTo(mapRef.current)
+            })
+          }
+        })
+        .catch(() => {})
+    }
   }, [pathAnim.active, pathAnim.feature])
 
   // ── Path animation — apply step when changed externally (reset / seek) ───
@@ -533,30 +580,12 @@ export default function MapView({
     if (!pathAnim.playing || !pathAnim.active || !pathAnim.feature?.geometry) return
 
     const { totalSteps, speed, feature } = pathAnim
-    const color = getEFColor(feature.properties)
 
     animIntervalRef.current = setInterval(() => {
       animStepRef.current = Math.min(animStepRef.current + 1, totalSteps)
       const step = animStepRef.current
 
       applyAnimFrame(step, totalSteps, feature)
-
-      // Add a damage dot every 6 steps (visual breadcrumb trail)
-      if (step % 6 === 0 && pathAnimLayerRef.current) {
-        const latLngs = pathAnimLayerRef.current.getLatLngs()
-        const last = latLngs[latLngs.length - 1]
-        if (last && mapRef.current) {
-          const dot = L.circleMarker(last, {
-            radius: 3,
-            fillColor: color,
-            color: 'rgba(255,255,255,0.3)',
-            weight: 1,
-            fillOpacity: 0.75,
-          }).addTo(mapRef.current)
-          pathDamageMarkersRef.current.push(dot)
-        }
-      }
-
       onPathAnimUpdate(step)
 
       if (step >= totalSteps) {
@@ -566,10 +595,7 @@ export default function MapView({
       }
     }, speed)
 
-    return () => {
-      clearInterval(animIntervalRef.current)
-      animIntervalRef.current = null
-    }
+    return () => { clearInterval(animIntervalRef.current); animIntervalRef.current = null }
   }, [pathAnim.playing, pathAnim.active, pathAnim.totalSteps, pathAnim.speed, pathAnim.feature, applyAnimFrame, onPathAnimUpdate, onPathAnimDone])
 
   return (

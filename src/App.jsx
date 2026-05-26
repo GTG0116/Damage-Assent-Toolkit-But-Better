@@ -2,7 +2,7 @@ import { useState, useCallback, useRef } from 'react'
 import MapView from './components/MapView'
 import Sidebar from './components/Sidebar'
 import DataInspector from './components/DataInspector'
-import { FILTERED_ALERT_TYPES } from './constants'
+import { FILTERED_ALERT_TYPES, LAYER_URLS } from './constants'
 import './App.css'
 
 function todayStr() {
@@ -58,38 +58,61 @@ export default function App() {
     }
   }, [])
 
-  const handleFeatureSelect = useCallback((sel) => {
+  // Async: re-query the FeatureServer for the selected line without simplification
+  // so the animation uses the full-resolution geometry.
+  const handleFeatureSelect = useCallback(async (sel) => {
     setSelectedFeature(sel)
-    if (sel?.type === 'lines' && sel.feature?.geometry) {
-      const props = sel.feature.properties ?? {}
-
-      // Derive date from stormdate or starttime
-      let dateStr = todayStr()
-      const rawDate = props.stormdate ?? props.starttime
-      if (rawDate) {
-        const ms = toMs(rawDate)
-        if (ms) {
-          const d = new Date(ms)
-          dateStr = d.toISOString().slice(0, 10)
-        }
-      }
-
-      const coords = (
-        sel.feature.geometry.type === 'LineString'
-          ? sel.feature.geometry.coordinates
-          : sel.feature.geometry.type === 'MultiLineString'
-            ? sel.feature.geometry.coordinates.flat()
-            : []
-      )
-      const totalSteps = Math.max(30, Math.min(coords.length * 3, 180))
-
-      setPathAnim({ active: true, feature: sel.feature, playing: false, step: 0, totalSteps, speed: 120 })
-      setRadarOverlay((prev) => ({ ...prev, enabled: true, date: dateStr, time: '00:00', playing: false }))
-      setLsrOverlay((prev) => ({ ...prev, enabled: true, date: dateStr, time: '00:00' }))
-      setAlertsOverlay((prev) => ({ ...prev, enabled: true, date: dateStr, time: '00:00' }))
-    } else if (!sel) {
+    if (!sel) {
       setPathAnim((prev) => ({ ...prev, active: false, playing: false, step: 0, feature: null }))
+      return
     }
+    if (sel.type !== 'lines' || !sel.feature?.geometry) return
+
+    const props = sel.feature.properties ?? {}
+    const oid = props.OBJECTID
+
+    let fullFeature = sel.feature
+    if (oid) {
+      try {
+        const fields = 'OBJECTID,efscale,efnum,maxwind,stormdate,starttime,endtime,length,width,injuries,fatalities,propdamage,cropdamage,wfo,comments'
+        const url = `${LAYER_URLS.lines}/query?where=OBJECTID%3D${oid}&outFields=${fields}&f=geojson&outSR=4326&returnGeometry=true`
+        const res = await fetch(url)
+        const gj = await res.json()
+        const feat = gj.features?.[0]
+        if (feat?.geometry?.coordinates?.length) {
+          fullFeature = {
+            ...sel.feature,
+            geometry: feat.geometry,
+            properties: { ...props, ...(feat.properties ?? {}) },
+          }
+        }
+      } catch {
+        // fall back to simplified geometry already in the feature
+      }
+    }
+
+    // Derive event date
+    let dateStr = todayStr()
+    const rawDate = fullFeature.properties?.stormdate ?? fullFeature.properties?.starttime
+    if (rawDate) {
+      const ms = toMs(rawDate)
+      if (ms) dateStr = new Date(ms).toISOString().slice(0, 10)
+    }
+
+    const coords =
+      fullFeature.geometry.type === 'LineString'
+        ? fullFeature.geometry.coordinates
+        : fullFeature.geometry.type === 'MultiLineString'
+          ? fullFeature.geometry.coordinates.flat()
+          : []
+
+    // 1 step per coordinate keeps the path drawing smooth; cap at 300 steps
+    const totalSteps = Math.max(60, Math.min(coords.length, 300))
+
+    setPathAnim({ active: true, feature: fullFeature, playing: false, step: 0, totalSteps, speed: 100 })
+    setRadarOverlay((prev) => ({ ...prev, enabled: true, date: dateStr, time: '00:00', playing: false }))
+    setLsrOverlay((prev) => ({ ...prev, enabled: true, date: dateStr, time: '00:00' }))
+    setAlertsOverlay((prev) => ({ ...prev, enabled: true, date: dateStr, time: '00:00' }))
   }, [])
 
   const toggleAlertType = useCallback((type) => {
