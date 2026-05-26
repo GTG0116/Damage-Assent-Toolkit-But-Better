@@ -1,5 +1,8 @@
 import { useState } from 'react'
-import { EF_COLORS, EF_LEGEND, SPC_COLORS, SPC_LEGEND, SPC_TIMES } from '../constants'
+import {
+  EF_COLORS, EF_LEGEND, SPC_COLORS, SPC_LEGEND, SPC_TIMES,
+  FILTERED_ALERT_TYPES, ALERT_COLORS, getEFColor,
+} from '../constants'
 
 const PRESETS = [
   { id: '3out', label: 'Next 3 days', days: [0, 3] },
@@ -18,6 +21,29 @@ function presetFromRange({ start, end }) {
     if (start === fmt(s) && end === fmt(e)) return p.id
   }
   return 'custom'
+}
+
+function toMs(val) {
+  if (val === null || val === undefined) return null
+  if (typeof val === 'number') return val
+  const d = new Date(val)
+  return isNaN(d) ? null : d.getTime()
+}
+
+function fmtUtc(ms) {
+  if (!ms) return null
+  const d = new Date(ms)
+  return d.toUTCString().slice(0, 25) + ' UTC'
+}
+
+function interpAnimTime(pathAnim) {
+  if (!pathAnim.active || !pathAnim.feature) return null
+  const props = pathAnim.feature.properties ?? {}
+  const startMs = toMs(props.starttime)
+  const endMs = toMs(props.endtime)
+  if (startMs === null || endMs === null) return null
+  const ratio = pathAnim.totalSteps > 0 ? pathAnim.step / pathAnim.totalSteps : 0
+  return startMs + ratio * (endMs - startMs)
 }
 
 const LAYERS = [
@@ -54,23 +80,39 @@ const LAYERS = [
   },
 ]
 
+const RADAR_SPEEDS = [
+  { label: 'Slow', ms: 500 },
+  { label: 'Normal', ms: 200 },
+  { label: 'Fast', ms: 80 },
+]
+
+const ANIM_SPEEDS = [
+  { label: 'Slow', ms: 300 },
+  { label: 'Normal', ms: 120 },
+  { label: 'Fast', ms: 40 },
+]
+
 export default function Sidebar({
   layers, onToggleLayer,
   dateRange, onDateRangeChange,
   onSearch,
   spcOutlook, onSpcChange,
   alertsOverlay, onAlertsChange,
+  alertTypes, onToggleAlertType,
   lsrOverlay, onLsrChange,
+  radarOverlay, onRadarChange,
+  pathAnim, onPathAnimChange, onClosePathAnim,
 }) {
   const [query, setQuery] = useState('')
   const [layersOpen, setLayersOpen] = useState(true)
   const [legendOpen, setLegendOpen] = useState(false)
   const [spcOpen, setSpcOpen] = useState(false)
+  const [radarOpen, setRadarOpen] = useState(false)
   const [alertsOpen, setAlertsOpen] = useState(false)
+  const [alertsFilterOpen, setAlertsFilterOpen] = useState(false)
   const [lsrOpen, setLsrOpen] = useState(false)
 
   const activePreset = presetFromRange(dateRange)
-
   const daySpan = dateRange.start && dateRange.end
     ? Math.round((new Date(dateRange.end) - new Date(dateRange.start)) / 86400000)
     : null
@@ -94,6 +136,16 @@ export default function Sidebar({
     e.preventDefault()
     if (query.trim()) onSearch(query.trim())
   }
+
+  const progressPct = pathAnim.totalSteps > 0
+    ? Math.round((pathAnim.step / pathAnim.totalSteps) * 100)
+    : 0
+
+  const animCurrentMs = interpAnimTime(pathAnim)
+  const animEF = pathAnim.feature?.properties?.efscale
+    ? pathAnim.feature.properties.efscale.toString().toUpperCase().trim()
+    : null
+  const animColor = animEF ? (EF_COLORS[animEF] ?? EF_COLORS.default) : EF_COLORS.default
 
   return (
     <aside className="sidebar">
@@ -136,6 +188,64 @@ export default function Sidebar({
       </form>
 
       <div className="sidebar__section-divider" />
+
+      {/* ── Path Animation Panel ───────────────────────────────────────────── */}
+      {pathAnim.active && (
+        <>
+          <div className="sidebar__anim-panel">
+            <div className="sidebar__anim-header">
+              <div className="sidebar__anim-title">
+                {animEF && (
+                  <span className="sidebar__anim-ef" style={{ color: animColor }}>
+                    {animEF}
+                  </span>
+                )}
+                <span className="sidebar__anim-label">Tornado Path</span>
+              </div>
+              <button className="sidebar__anim-close" onClick={onClosePathAnim} title="Dismiss">✕</button>
+            </div>
+
+            <div className="sidebar__anim-progress">
+              <div
+                className="sidebar__anim-progress-fill"
+                style={{ width: `${progressPct}%`, background: animColor }}
+              />
+            </div>
+
+            <div className="sidebar__anim-btns">
+              <button
+                className="sidebar__anim-btn sidebar__anim-btn--play"
+                onClick={() => onPathAnimChange((prev) => ({ ...prev, playing: !prev.playing }))}
+              >
+                {pathAnim.playing ? '⏸ Pause' : '▶ Play'}
+              </button>
+              <button
+                className="sidebar__anim-btn"
+                onClick={() => onPathAnimChange((prev) => ({ ...prev, playing: false, step: 0 }))}
+                title="Reset"
+              >
+                ↺
+              </button>
+              <span className="sidebar__anim-time">
+                {animCurrentMs ? fmtUtc(animCurrentMs) : `${progressPct}%`}
+              </span>
+            </div>
+
+            <div className="sidebar__speed-btns">
+              {ANIM_SPEEDS.map(({ label, ms }) => (
+                <button
+                  key={label}
+                  className={`sidebar__speed-btn${pathAnim.speed === ms ? ' active' : ''}`}
+                  onClick={() => onPathAnimChange((prev) => ({ ...prev, speed: ms }))}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="sidebar__section-divider" />
+        </>
+      )}
 
       {/* DAT Layers */}
       <div className="sidebar__section">
@@ -258,13 +368,86 @@ export default function Sidebar({
                 <div key={key} className="sidebar__legend-row">
                   <div
                     className="sidebar__legend-swatch"
-                    style={{ background: SPC_COLORS[key], boxShadow: `0 0 5px ${SPC_COLORS[key]}88` }}
+                    style={{ background: SPC_COLORS[key] }}
                   />
                   <span className="sidebar__legend-label" style={{ width: 42 }}>{label}</span>
                   <span className="sidebar__legend-range">{desc}</span>
                 </div>
               ))}
             </div>
+          </div>
+        )}
+      </div>
+
+      <div className="sidebar__section-divider" />
+
+      {/* ── Radar ─────────────────────────────────────────────────────────── */}
+      <div className="sidebar__section">
+        <button className="sidebar__accordion" onClick={() => setRadarOpen((v) => !v)}>
+          <span>NEXRAD Radar</span>
+          <div className="sidebar__accordion-right">
+            <div
+              className={`sidebar__toggle sidebar__toggle--sm${radarOverlay.enabled ? ' on' : ''}`}
+              role="switch"
+              aria-checked={radarOverlay.enabled}
+              onClick={(e) => {
+                e.stopPropagation()
+                onRadarChange({ ...radarOverlay, enabled: !radarOverlay.enabled, playing: false })
+              }}
+            />
+            <span className={`sidebar__chevron${radarOpen ? ' open' : ''}`}>›</span>
+          </div>
+        </button>
+        {radarOpen && (
+          <div className="sidebar__overlay-controls">
+            <div className="sidebar__overlay-note">
+              IEM composite NEXRAD reflectivity. Frames at 5-min intervals; older archives may have gaps.
+            </div>
+            <div className="sidebar__date-row">
+              <span className="sidebar__date-label">Date</span>
+              <input
+                type="date"
+                className="sidebar__date-input"
+                value={radarOverlay.date}
+                onChange={(e) => onRadarChange({ ...radarOverlay, date: e.target.value, playing: false })}
+              />
+            </div>
+            <div className="sidebar__date-row" style={{ marginTop: 5 }}>
+              <span className="sidebar__date-label">Time</span>
+              <input
+                type="time"
+                className="sidebar__date-input"
+                value={radarOverlay.time}
+                onChange={(e) => onRadarChange({ ...radarOverlay, time: e.target.value, playing: false })}
+              />
+            </div>
+            <div className="sidebar__anim-btns" style={{ marginTop: 8 }}>
+              <button
+                className={`sidebar__anim-btn${radarOverlay.playing ? '' : ' sidebar__anim-btn--play'}`}
+                style={radarOverlay.playing ? { borderColor: 'rgba(255,160,0,0.4)', color: '#FFA500' } : {}}
+                onClick={() => onRadarChange({ ...radarOverlay, playing: !radarOverlay.playing })}
+                disabled={pathAnim.playing}
+                title={pathAnim.playing ? 'Controlled by path animation' : undefined}
+              >
+                {radarOverlay.playing ? '⏸ Pause Loop' : '▶ Play Loop'}
+              </button>
+            </div>
+            <div className="sidebar__speed-btns">
+              {RADAR_SPEEDS.map(({ label, ms }) => (
+                <button
+                  key={label}
+                  className={`sidebar__speed-btn${radarOverlay.speed === ms ? ' active' : ''}`}
+                  onClick={() => onRadarChange({ ...radarOverlay, speed: ms })}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {pathAnim.playing && (
+              <div className="sidebar__overlay-note" style={{ marginTop: 6, borderColor: 'rgba(0,245,255,0.15)', color: '#64748B' }}>
+                Radar synced to path animation
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -311,6 +494,62 @@ export default function Sidebar({
                 onChange={(e) => onAlertsChange({ ...alertsOverlay, time: e.target.value })}
               />
             </div>
+
+            {/* Alert type filters */}
+            <button
+              className="sidebar__accordion"
+              style={{ marginTop: 8, fontSize: 10, padding: '6px 0' }}
+              onClick={() => setAlertsFilterOpen((v) => !v)}
+            >
+              <span style={{ color: '#475569' }}>
+                Filter Types ({alertTypes.size}/{FILTERED_ALERT_TYPES.length})
+              </span>
+              <span className={`sidebar__chevron${alertsFilterOpen ? ' open' : ''}`}>›</span>
+            </button>
+
+            {alertsFilterOpen && (
+              <div className="sidebar__filter-list">
+                <div style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
+                  <button
+                    className="sidebar__speed-btn"
+                    style={{ flex: 'none', padding: '3px 8px' }}
+                    onClick={() => FILTERED_ALERT_TYPES.forEach((t) => { if (!alertTypes.has(t)) onToggleAlertType(t) })}
+                  >
+                    All
+                  </button>
+                  <button
+                    className="sidebar__speed-btn"
+                    style={{ flex: 'none', padding: '3px 8px' }}
+                    onClick={() => FILTERED_ALERT_TYPES.filter((t) => alertTypes.has(t)).forEach((t) => onToggleAlertType(t))}
+                  >
+                    None
+                  </button>
+                </div>
+                {FILTERED_ALERT_TYPES.map((type) => {
+                  const on = alertTypes.has(type)
+                  return (
+                    <div
+                      key={type}
+                      className="sidebar__filter-item"
+                      onClick={() => onToggleAlertType(type)}
+                    >
+                      <div className={`sidebar__filter-check${on ? ' checked' : ''}`}>
+                        {on && (
+                          <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
+                            <polyline points="1.5,5 4,7.5 8.5,2" stroke="#00F5FF" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                          </svg>
+                        )}
+                      </div>
+                      <div
+                        className="sidebar__legend-swatch"
+                        style={{ background: ALERT_COLORS[type] ?? '#94A3B8', width: 9, height: 9 }}
+                      />
+                      <span className="sidebar__filter-label">{type}</span>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -338,6 +577,7 @@ export default function Sidebar({
           <div className="sidebar__overlay-controls">
             <div className="sidebar__overlay-note">
               Shows IEM LSRs in a 24-hour window from the selected date/time (UTC).
+              {pathAnim.active && ' During animation, LSRs appear progressively as the tornado advances.'}
             </div>
             <div className="sidebar__date-row">
               <span className="sidebar__date-label">Date</span>
@@ -377,10 +617,7 @@ export default function Sidebar({
               <div key={scale} className="sidebar__legend-row">
                 <div
                   className="sidebar__legend-swatch"
-                  style={{
-                    background: EF_COLORS[scale],
-                    boxShadow: `0 0 6px ${EF_COLORS[scale]}88`,
-                  }}
+                  style={{ background: EF_COLORS[scale] }}
                 />
                 <span className="sidebar__legend-label">{label}</span>
                 <span className="sidebar__legend-range">{range}</span>

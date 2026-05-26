@@ -1,25 +1,13 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import L from 'leaflet'
 import { featureLayer } from 'esri-leaflet'
 import {
-  EF_COLORS, LAYER_URLS, getEFColor, makeWhere,
+  LAYER_URLS, getEFColor, makeWhere,
   getSpcColor, getAlertColor, getLsrColor,
+  generateRadarFrames, radarTileUrl, timeToFrameId,
+  FILTERED_ALERT_TYPES,
 } from '../constants'
 import 'leaflet/dist/leaflet.css'
-
-function glowMarker(color) {
-  return L.divIcon({
-    html: `<div style="
-      width:12px;height:12px;border-radius:50%;
-      border:1.5px solid ${color};
-      background:${color}33;
-      box-shadow:0 0 5px ${color};
-    "></div>`,
-    className: '',
-    iconSize: [12, 12],
-    iconAnchor: [6, 6],
-  })
-}
 
 function lineStyle(feature) {
   const color = getEFColor(feature.properties)
@@ -41,9 +29,24 @@ const POINT_FIELDS = [
 ]
 const POLYGON_FIELDS = ['OBJECTID', 'efscale', 'stormdate', 'office', 'comments']
 
+function toMs(val) {
+  if (val === null || val === undefined) return null
+  if (typeof val === 'number') return val
+  const d = new Date(val)
+  return isNaN(d) ? null : d.getTime()
+}
+
+function getCoords(geometry) {
+  if (!geometry) return []
+  if (geometry.type === 'LineString') return geometry.coordinates
+  if (geometry.type === 'MultiLineString') return geometry.coordinates.flat()
+  return []
+}
+
 export default function MapView({
   layers, dateRange, onFeatureSelect, selectedFeature, onMapReady,
-  spcOutlook, alertsOverlay, lsrOverlay,
+  spcOutlook, alertsOverlay, alertTypes, lsrOverlay,
+  radarOverlay, pathAnim, onPathAnimUpdate, onPathAnimDone,
 }) {
   const containerRef = useRef(null)
   const mapRef = useRef(null)
@@ -53,9 +56,70 @@ export default function MapView({
   const whereDebounceRef = useRef(null)
   const spcLayerRef = useRef(null)
   const alertsLayerRef = useRef(null)
-  const lsrLayerRef = useRef(null)
+  const alertsAllDataRef = useRef(null)
+  const lsrGeoLayerRef = useRef(null)
+  const lsrAllDataRef = useRef(null)
+  const radarLayerRef = useRef(null)
+  const radarFrameIdxRef = useRef(0)
+  const pathAnimLayerRef = useRef(null)
+  const pathAnimHeadRef = useRef(null)
+  const pathDamageMarkersRef = useRef([])
+  const animStepRef = useRef(0)
+  const animIntervalRef = useRef(null)
+  const pathAnimActiveRef = useRef(false)
   const [isLoading, setIsLoading] = useState(false)
 
+  useEffect(() => { pathAnimActiveRef.current = pathAnim.active }, [pathAnim.active])
+
+  const filterLsrByTime = useCallback((maxMs) => {
+    const layer = lsrGeoLayerRef.current
+    const data = lsrAllDataRef.current
+    if (!layer || !data) return
+    layer.clearLayers()
+    const filtered = (data.features ?? []).filter((f) => {
+      const v = f.properties?.valid
+      if (!v) return true
+      return new Date(v).getTime() <= maxMs
+    })
+    if (filtered.length) layer.addData({ type: 'FeatureCollection', features: filtered })
+  }, [])
+
+  const applyAnimFrame = useCallback((step, totalSteps, feature) => {
+    const coords = getCoords(feature?.geometry)
+    if (!coords.length || !mapRef.current) return
+    const ratio = totalSteps > 0 ? step / totalSteps : 0
+    const numPts = step === 0 ? 1 : Math.max(2, Math.ceil(ratio * coords.length))
+
+    const latLngs = coords.slice(0, numPts).map(([lon, lat]) => [lat, lon])
+    if (pathAnimLayerRef.current) pathAnimLayerRef.current.setLatLngs(latLngs)
+
+    const headCoord = coords[Math.min(numPts - 1, coords.length - 1)]
+    if (pathAnimHeadRef.current && headCoord) {
+      pathAnimHeadRef.current.setLatLng([headCoord[1], headCoord[0]])
+    }
+
+    // Sync radar time
+    const startMs = toMs(feature?.properties?.starttime)
+    const endMs = toMs(feature?.properties?.endtime)
+    if (startMs !== null && endMs !== null && endMs > startMs) {
+      const currentMs = startMs + ratio * (endMs - startMs)
+      if (radarLayerRef.current) {
+        const d = new Date(currentMs)
+        const min5 = Math.floor(d.getUTCMinutes() / 5) * 5
+        const frameId = [
+          String(d.getUTCFullYear()),
+          String(d.getUTCMonth() + 1).padStart(2, '0'),
+          String(d.getUTCDate()).padStart(2, '0'),
+          String(d.getUTCHours()).padStart(2, '0'),
+          String(min5).padStart(2, '0'),
+        ].join('')
+        radarLayerRef.current.setUrl(radarTileUrl(frameId))
+      }
+      filterLsrByTime(currentMs)
+    }
+  }, [filterLsrByTime])
+
+  // ── Map init ─────────────────────────────────────────────────────────────
   useEffect(() => {
     const map = L.map(containerRef.current, {
       center: [38.5, -96],
@@ -72,7 +136,7 @@ export default function MapView({
     L.control.zoom({ position: 'bottomright' }).addTo(map)
     L.control
       .attribution({ position: 'bottomright', prefix: false })
-      .addAttribution('© <a href="https://www.noaa.gov">NOAA NWS</a> | © OpenStreetMap | © CARTO')
+      .addAttribution('© <a href="https://www.noaa.gov">NOAA NWS</a> | © OpenStreetMap | © CARTO | © IEM')
       .addTo(map)
 
     const trackLoad = (delta) => {
@@ -104,7 +168,7 @@ export default function MapView({
             },
             pointToLayer: (_, latlng) =>
               L.circleMarker(latlng, {
-                radius: 16,
+                radius: 14,
                 color,
                 weight: 2,
                 opacity: 1,
@@ -114,7 +178,7 @@ export default function MapView({
           }).addTo(map)
           highlightRef.current = hl
         } catch {
-          // geometry might be null
+          // null geometry
         }
 
         onFeatureSelect({ feature, type })
@@ -130,11 +194,20 @@ export default function MapView({
       simplifyFactor: 0.5,
       precision: 4,
     })
+
+    // Simple SVG circle markers — no box-shadow, no divIcon overhead
     const pointsLayer = makeLayer(LAYER_URLS.points, 'points', {
       fields: POINT_FIELDS,
       pointToLayer: (gj, latlng) =>
-        L.marker(latlng, { icon: glowMarker(getEFColor(gj.properties)) }),
+        L.circleMarker(latlng, {
+          radius: 5,
+          fillColor: getEFColor(gj.properties),
+          color: 'rgba(255,255,255,0.35)',
+          weight: 1,
+          fillOpacity: 0.88,
+        }),
     })
+
     const polygonsLayer = makeLayer(LAYER_URLS.polygons, 'polygons', {
       style: polygonStyle,
       fields: POLYGON_FIELDS,
@@ -160,7 +233,7 @@ export default function MapView({
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Layer visibility sync
+  // ── Layer visibility sync ─────────────────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
@@ -172,7 +245,7 @@ export default function MapView({
     })
   }, [layers])
 
-  // Date range sync — debounced so rapid typing doesn't fire parallel queries
+  // ── Date range sync ───────────────────────────────────────────────────────
   useEffect(() => {
     clearTimeout(whereDebounceRef.current)
     whereDebounceRef.current = setTimeout(() => {
@@ -184,7 +257,7 @@ export default function MapView({
     return () => clearTimeout(whereDebounceRef.current)
   }, [dateRange])
 
-  // Clear highlight when inspector closes
+  // ── Clear highlight when inspector closes ─────────────────────────────────
   useEffect(() => {
     if (!selectedFeature && highlightRef.current && mapRef.current) {
       mapRef.current.removeLayer(highlightRef.current)
@@ -192,7 +265,7 @@ export default function MapView({
     }
   }, [selectedFeature])
 
-  // SPC Categorical Outlook layer
+  // ── SPC layer ─────────────────────────────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current
     if (spcLayerRef.current) {
@@ -207,10 +280,7 @@ export default function MapView({
     const url = `https://www.spc.noaa.gov/products/outlook/archive/${year}/day1otlk_${dateStr}_${spcOutlook.time}_cat.nolyr.geojson`
 
     fetch(url, { signal: controller.signal })
-      .then((r) => {
-        if (!r.ok) throw new Error(`SPC ${r.status}`)
-        return r.json()
-      })
+      .then((r) => { if (!r.ok) throw new Error(); return r.json() })
       .then((data) => {
         if (!mapRef.current || controller.signal.aborted) return
         const layer = L.geoJSON(data, {
@@ -235,13 +305,14 @@ export default function MapView({
     return () => controller.abort()
   }, [spcOutlook])
 
-  // NWS Alerts layer
+  // ── NWS Alerts — fetch and cache ─────────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current
     if (alertsLayerRef.current) {
       if (map) map.removeLayer(alertsLayerRef.current)
       alertsLayerRef.current = null
     }
+    alertsAllDataRef.current = null
     if (!alertsOverlay.enabled || !alertsOverlay.date || !map) return
 
     const controller = new AbortController()
@@ -255,8 +326,18 @@ export default function MapView({
       .then((r) => r.json())
       .then((data) => {
         if (!mapRef.current || controller.signal.aborted) return
-        const features = (data.features ?? []).filter((f) => f.geometry)
-        const layer = L.geoJSON({ type: 'FeatureCollection', features }, {
+
+        // Only keep the 19 alert types from the screenshot
+        const allFeatures = (data.features ?? []).filter(
+          (f) => f.geometry && FILTERED_ALERT_TYPES.includes(f.properties?.event ?? '')
+        )
+        alertsAllDataRef.current = allFeatures
+
+        // Apply current alertTypes filter
+        const currentAlertTypes = alertTypes
+        const features = allFeatures.filter((f) => currentAlertTypes.has(f.properties?.event ?? ''))
+
+        alertsLayerRef.current = L.geoJSON({ type: 'FeatureCollection', features }, {
           style: (feature) => {
             const color = getAlertColor(feature.properties?.event ?? '')
             return { color, weight: 2, opacity: 0.88, fillColor: color, fillOpacity: 0.22 }
@@ -270,21 +351,53 @@ export default function MapView({
             )
           },
         }).addTo(mapRef.current)
-        alertsLayerRef.current = layer
       })
       .catch(() => {})
 
     return () => controller.abort()
-  }, [alertsOverlay])
+  }, [alertsOverlay]) // alertTypes handled by separate effect below
 
-  // LSR layer (IEM)
+  // ── Alert type filter — client-side, no re-fetch ──────────────────────────
   useEffect(() => {
     const map = mapRef.current
-    if (lsrLayerRef.current) {
-      if (map) map.removeLayer(lsrLayerRef.current)
-      lsrLayerRef.current = null
+    const allData = alertsAllDataRef.current
+    if (!map || !alertsLayerRef.current || !allData) return
+
+    alertsLayerRef.current.clearLayers()
+    const features = allData.filter((f) => alertTypes.has(f.properties?.event ?? ''))
+    alertsLayerRef.current.addData({ type: 'FeatureCollection', features })
+  }, [alertTypes])
+
+  // ── LSR layer ─────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const map = mapRef.current
+    if (lsrGeoLayerRef.current) {
+      if (map) map.removeLayer(lsrGeoLayerRef.current)
+      lsrGeoLayerRef.current = null
     }
+    lsrAllDataRef.current = null
     if (!lsrOverlay.enabled || !lsrOverlay.date || !map) return
+
+    lsrGeoLayerRef.current = L.geoJSON(null, {
+      pointToLayer: (feature, latlng) => {
+        const color = getLsrColor(feature.properties?.typetext ?? '')
+        return L.circleMarker(latlng, {
+          radius: 6,
+          fillColor: color,
+          color: '#000',
+          weight: 1,
+          opacity: 1,
+          fillOpacity: 0.9,
+        })
+      },
+      onEachFeature: (feature, lyr) => {
+        const p = feature.properties ?? {}
+        const type = p.typetext ?? 'LSR'
+        const mag = p.magnitude ? ` ${p.magnitude}` : ''
+        const city = p.city ? ` — ${p.city}, ${p.st ?? ''}` : ''
+        lyr.bindTooltip(`<b>${type}${mag}</b>${city}`, { sticky: true, className: 'map-tooltip' })
+      },
+    }).addTo(map)
 
     const controller = new AbortController()
     const startISO = `${lsrOverlay.date}T${lsrOverlay.time || '00:00'}:00Z`
@@ -296,36 +409,168 @@ export default function MapView({
     fetch(url, { signal: controller.signal })
       .then((r) => r.json())
       .then((data) => {
-        if (!mapRef.current || controller.signal.aborted) return
-        const layer = L.geoJSON(data, {
-          pointToLayer: (feature, latlng) => {
-            const color = getLsrColor(feature.properties?.typetext ?? '')
-            return L.circleMarker(latlng, {
-              radius: 6,
-              fillColor: color,
-              color: '#000',
-              weight: 1,
-              opacity: 1,
-              fillOpacity: 0.9,
-            })
-          },
-          onEachFeature: (feature, lyr) => {
-            const p = feature.properties ?? {}
-            const type = p.typetext ?? 'LSR'
-            const mag = p.magnitude ? ` ${p.magnitude}` : ''
-            const city = p.city ? ` — ${p.city}, ${p.st ?? ''}` : ''
-            lyr.bindTooltip(
-              `<b>${type}${mag}</b>${city}`,
-              { sticky: true, className: 'map-tooltip' }
-            )
-          },
-        }).addTo(mapRef.current)
-        lsrLayerRef.current = layer
+        if (!mapRef.current || controller.signal.aborted || !lsrGeoLayerRef.current) return
+        lsrAllDataRef.current = data
+        // If animation is active, keep hidden (animation will populate progressively)
+        if (!pathAnimActiveRef.current) {
+          lsrGeoLayerRef.current.addData(data)
+        }
       })
       .catch(() => {})
 
-    return () => controller.abort()
+    return () => {
+      controller.abort()
+      if (mapRef.current && lsrGeoLayerRef.current) {
+        mapRef.current.removeLayer(lsrGeoLayerRef.current)
+        lsrGeoLayerRef.current = null
+      }
+      lsrAllDataRef.current = null
+    }
   }, [lsrOverlay])
+
+  // ── LSR visibility when animation active/inactive ─────────────────────────
+  useEffect(() => {
+    const layer = lsrGeoLayerRef.current
+    const data = lsrAllDataRef.current
+    if (!layer || !data) return
+    if (!pathAnim.active) {
+      layer.clearLayers()
+      layer.addData(data)
+    } else {
+      layer.clearLayers() // animation will re-add progressively
+    }
+  }, [pathAnim.active])
+
+  // ── Radar layer — create when enabled ────────────────────────────────────
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+    if (radarLayerRef.current) {
+      map.removeLayer(radarLayerRef.current)
+      radarLayerRef.current = null
+    }
+    if (!radarOverlay.enabled || !radarOverlay.date) return
+
+    const frameId = timeToFrameId(radarOverlay.date, radarOverlay.time)
+    if (!frameId) return
+    radarLayerRef.current = L.tileLayer(radarTileUrl(frameId), {
+      opacity: 0.65,
+      zIndex: 5,
+    }).addTo(map)
+  }, [radarOverlay.enabled, radarOverlay.date]) // time handled below
+
+  // ── Radar URL sync when time changes ─────────────────────────────────────
+  useEffect(() => {
+    if (!radarLayerRef.current || !radarOverlay.enabled) return
+    const frameId = timeToFrameId(radarOverlay.date, radarOverlay.time)
+    if (frameId) radarLayerRef.current.setUrl(radarTileUrl(frameId))
+  }, [radarOverlay.time, radarOverlay.enabled, radarOverlay.date])
+
+  // ── Radar playback ────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!radarOverlay.playing || !radarOverlay.enabled) return
+    if (pathAnim.playing) return // path animation owns radar during its playback
+
+    const frames = generateRadarFrames(radarOverlay.date)
+    if (!frames.length) return
+
+    // Seed frame index from current time setting
+    const [hh = '0', mm = '0'] = (radarOverlay.time || '00:00').split(':')
+    radarFrameIdxRef.current = Math.min(
+      Math.floor((parseInt(hh) * 60 + parseInt(mm)) / 5),
+      frames.length - 1
+    )
+
+    const interval = setInterval(() => {
+      radarFrameIdxRef.current = (radarFrameIdxRef.current + 1) % frames.length
+      const frameId = frames[radarFrameIdxRef.current]
+      if (radarLayerRef.current) radarLayerRef.current.setUrl(radarTileUrl(frameId))
+    }, radarOverlay.speed)
+
+    return () => clearInterval(interval)
+  }, [radarOverlay.playing, radarOverlay.enabled, radarOverlay.date, radarOverlay.speed])
+
+  // ── Path animation — setup layers when feature changes ───────────────────
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+
+    // Always clean up first
+    if (animIntervalRef.current) { clearInterval(animIntervalRef.current); animIntervalRef.current = null }
+    if (pathAnimLayerRef.current) { map.removeLayer(pathAnimLayerRef.current); pathAnimLayerRef.current = null }
+    if (pathAnimHeadRef.current) { map.removeLayer(pathAnimHeadRef.current); pathAnimHeadRef.current = null }
+    pathDamageMarkersRef.current.forEach((m) => { try { map.removeLayer(m) } catch {} })
+    pathDamageMarkersRef.current = []
+
+    if (!pathAnim.active || !pathAnim.feature?.geometry) return
+
+    const coords = getCoords(pathAnim.feature.geometry)
+    if (!coords.length) return
+
+    const color = getEFColor(pathAnim.feature.properties)
+    animStepRef.current = 0
+
+    pathAnimLayerRef.current = L.polyline([], { color, weight: 5, opacity: 0.95 }).addTo(map)
+    pathAnimHeadRef.current = L.circleMarker([coords[0][1], coords[0][0]], {
+      radius: 9,
+      fillColor: color,
+      color: '#fff',
+      weight: 2.5,
+      fillOpacity: 1,
+    }).addTo(map)
+  }, [pathAnim.active, pathAnim.feature])
+
+  // ── Path animation — apply step when changed externally (reset / seek) ───
+  useEffect(() => {
+    if (pathAnim.playing) return
+    if (!pathAnim.active || !pathAnim.feature?.geometry) return
+    animStepRef.current = pathAnim.step
+    applyAnimFrame(pathAnim.step, pathAnim.totalSteps, pathAnim.feature)
+  }, [pathAnim.step, pathAnim.playing, pathAnim.active, pathAnim.feature, pathAnim.totalSteps, applyAnimFrame])
+
+  // ── Path animation — playback loop ────────────────────────────────────────
+  useEffect(() => {
+    if (!pathAnim.playing || !pathAnim.active || !pathAnim.feature?.geometry) return
+
+    const { totalSteps, speed, feature } = pathAnim
+    const color = getEFColor(feature.properties)
+
+    animIntervalRef.current = setInterval(() => {
+      animStepRef.current = Math.min(animStepRef.current + 1, totalSteps)
+      const step = animStepRef.current
+
+      applyAnimFrame(step, totalSteps, feature)
+
+      // Add a damage dot every 6 steps (visual breadcrumb trail)
+      if (step % 6 === 0 && pathAnimLayerRef.current) {
+        const latLngs = pathAnimLayerRef.current.getLatLngs()
+        const last = latLngs[latLngs.length - 1]
+        if (last && mapRef.current) {
+          const dot = L.circleMarker(last, {
+            radius: 3,
+            fillColor: color,
+            color: 'rgba(255,255,255,0.3)',
+            weight: 1,
+            fillOpacity: 0.75,
+          }).addTo(mapRef.current)
+          pathDamageMarkersRef.current.push(dot)
+        }
+      }
+
+      onPathAnimUpdate(step)
+
+      if (step >= totalSteps) {
+        clearInterval(animIntervalRef.current)
+        animIntervalRef.current = null
+        onPathAnimDone()
+      }
+    }, speed)
+
+    return () => {
+      clearInterval(animIntervalRef.current)
+      animIntervalRef.current = null
+    }
+  }, [pathAnim.playing, pathAnim.active, pathAnim.totalSteps, pathAnim.speed, pathAnim.feature, applyAnimFrame, onPathAnimUpdate, onPathAnimDone])
 
   return (
     <>
