@@ -80,28 +80,50 @@ export function getSpcColor(label = '') {
   return SPC_COLORS[label.toString().toUpperCase().trim()] ?? '#888888'
 }
 
+// ─── NWS Alert types shown on map (matches screenshot) ────────────────────
+export const FILTERED_ALERT_TYPES = [
+  'Tornado Warning',
+  'Tornado Watch',
+  'Severe Thunderstorm Warning',
+  'Severe Thunderstorm Watch',
+  'Flash Flood Warning',
+  'Winter Storm Watch',
+  'Winter Storm Warning',
+  'Blizzard Warning',
+  'Snow Squall Warning',
+  'Storm Surge Warning',
+  'Storm Surge Watch',
+  'Tropical Storm Warning',
+  'Tropical Storm Watch',
+  'Hurricane Warning',
+  'Hurricane Watch',
+  'Typhoon Warning',
+  'Typhoon Watch',
+  'Extreme Wind Warning',
+  'Special Weather Statement',
+]
+
 // ─── NWS Alert event colors ────────────────────────────────────────────────
 export const ALERT_COLORS = {
-  'Tornado Warning': '#FF2020',
-  'Tornado Watch': '#FFFF00',
-  'Tornado Emergency': '#7F0000',
+  'Tornado Warning':             '#FF2020',
+  'Tornado Watch':               '#C896FF',
   'Severe Thunderstorm Warning': '#FFA500',
-  'Severe Thunderstorm Watch': '#DB7093',
-  'Flash Flood Warning': '#00FF00',
-  'Flash Flood Watch': '#2E8B57',
-  'Flash Flood Emergency': '#008C00',
-  'Winter Storm Warning': '#FF69B4',
-  'Winter Storm Watch': '#4682B4',
-  'Blizzard Warning': '#FF4500',
-  'Special Weather Statement': '#FFE4B5',
-  'Dense Fog Advisory': '#708090',
-  'Wind Advisory': '#D2691E',
-  'High Wind Warning': '#DAA520',
-  'Fire Weather Watch': '#FFDEAD',
-  'Red Flag Warning': '#FF1493',
-  'Extreme Cold Warning': '#00FFFF',
-  'Heat Advisory': '#FF7F50',
-  'Excessive Heat Warning': '#C71585',
+  'Severe Thunderstorm Watch':   '#FFD700',
+  'Flash Flood Warning':         '#00FF00',
+  'Winter Storm Watch':          '#4682B4',
+  'Winter Storm Warning':        '#FF69B4',
+  'Blizzard Warning':            '#FF4500',
+  'Snow Squall Warning':         '#C0A8D8',
+  'Storm Surge Warning':         '#9B30FF',
+  'Storm Surge Watch':           '#7B68EE',
+  'Tropical Storm Warning':      '#FA8072',
+  'Tropical Storm Watch':        '#FFB6C1',
+  'Hurricane Warning':           '#DC143C',
+  'Hurricane Watch':             '#FF00FF',
+  'Typhoon Warning':             '#FF1493',
+  'Typhoon Watch':               '#DA70D6',
+  'Extreme Wind Warning':        '#FF8C00',
+  'Special Weather Statement':   '#40E0D0',
 }
 
 export function getAlertColor(event = '') {
@@ -133,4 +155,31 @@ export const LSR_COLORS = {
 
 export function getLsrColor(typetext = '') {
   return LSR_COLORS[typetext.toString().toUpperCase().trim()] ?? '#94A3B8'
+}
+
+// ─── Radar utilities (IEM NEXRAD composite tiles) ─────────────────────────
+export function generateRadarFrames(date) {
+  if (!date) return []
+  const [year, month, day] = date.split('-')
+  const frames = []
+  for (let h = 0; h < 24; h++) {
+    for (let m = 0; m < 60; m += 5) {
+      frames.push(
+        `${year}${month}${day}${String(h).padStart(2, '0')}${String(m).padStart(2, '0')}`
+      )
+    }
+  }
+  return frames
+}
+
+export function radarTileUrl(frameId) {
+  return `https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-${frameId}/{z}/{x}/{y}.png`
+}
+
+export function timeToFrameId(date, time) {
+  if (!date) return null
+  const [year, month, day] = date.split('-')
+  const [hh = '00', mm = '00'] = (time || '00:00').split(':')
+  const min5 = String(Math.floor(parseInt(mm) / 5) * 5).padStart(2, '0')
+  return `${year}${month}${day}${hh.padStart(2, '0')}${min5}`
 }
