@@ -157,7 +157,13 @@ export function getLsrColor(typetext = '') {
   return LSR_COLORS[typetext.toString().toUpperCase().trim()] ?? '#94A3B8'
 }
 
-// ─── Radar utilities (IEM NEXRAD composite tiles) ─────────────────────────
+// ─── Radar utilities — IEM NEXRAD WMS (historical archive) ────────────────
+// IEM serves NEXRAD composite reflectivity via WMS; tile cache 404s on cold paths.
+// The WMS endpoint reliably serves any historical date via the TIME parameter.
+export const IEM_WMS_URL = 'https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q.cgi'
+export const IEM_WMS_LAYER = 'nexrad-n0q-900913'
+
+// Returns array of frameIds (YYYYMMDDHHII) every 5 min for a given date
 export function generateRadarFrames(date) {
   if (!date) return []
   const [year, month, day] = date.split('-')
@@ -172,14 +178,28 @@ export function generateRadarFrames(date) {
   return frames
 }
 
-export function radarTileUrl(frameId) {
-  return `https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-${frameId}/{z}/{x}/{y}.png`
+// Convert YYYYMMDDHHII → ISO 8601 UTC string for WMS TIME param
+export function frameIdToIso(frameId) {
+  return `${frameId.slice(0,4)}-${frameId.slice(4,6)}-${frameId.slice(6,8)}T${frameId.slice(8,10)}:${frameId.slice(10,12)}:00Z`
 }
 
-export function timeToFrameId(date, time) {
+// Convert date + HH:MM → ISO 8601 UTC string (snapped to 5-min boundary)
+export function timeToIso(date, time) {
   if (!date) return null
-  const [year, month, day] = date.split('-')
   const [hh = '00', mm = '00'] = (time || '00:00').split(':')
   const min5 = String(Math.floor(parseInt(mm) / 5) * 5).padStart(2, '0')
-  return `${year}${month}${day}${hh.padStart(2, '0')}${min5}`
+  return `${date}T${hh.padStart(2, '0')}:${min5}:00Z`
+}
+
+// Convert epoch ms → ISO 8601 UTC string snapped to nearest 5 min
+export function msToIso(ms) {
+  const d = new Date(ms)
+  const min5 = Math.floor(d.getUTCMinutes() / 5) * 5
+  return [
+    d.getUTCFullYear(), '-',
+    String(d.getUTCMonth() + 1).padStart(2, '0'), '-',
+    String(d.getUTCDate()).padStart(2, '0'), 'T',
+    String(d.getUTCHours()).padStart(2, '0'), ':',
+    String(min5).padStart(2, '0'), ':00Z',
+  ].join('')
 }
