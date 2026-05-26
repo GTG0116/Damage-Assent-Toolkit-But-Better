@@ -4,6 +4,10 @@ import Sidebar from './components/Sidebar'
 import DataInspector from './components/DataInspector'
 import './App.css'
 
+function todayStr() {
+  return new Date().toISOString().slice(0, 10)
+}
+
 export default function App() {
   const [selectedFeature, setSelectedFeature] = useState(null)
   const [layers, setLayers] = useState({ lines: false, points: false, polygons: false })
@@ -14,6 +18,9 @@ export default function App() {
     const fmt = (d) => d.toISOString().slice(0, 10)
     return { start: fmt(start), end: fmt(end) }
   })
+  const [spcOutlook, setSpcOutlook] = useState({ enabled: false, date: todayStr(), time: '0100' })
+  const [alertsOverlay, setAlertsOverlay] = useState({ enabled: false, date: todayStr(), time: '00:00' })
+  const [lsrOverlay, setLsrOverlay] = useState({ enabled: false, date: todayStr(), time: '00:00' })
   const mapActionsRef = useRef(null)
 
   const toggleLayer = useCallback((key) => {
@@ -44,6 +51,9 @@ export default function App() {
         onFeatureSelect={setSelectedFeature}
         selectedFeature={selectedFeature}
         onMapReady={(actions) => { mapActionsRef.current = actions }}
+        spcOutlook={spcOutlook}
+        alertsOverlay={alertsOverlay}
+        lsrOverlay={lsrOverlay}
       />
       <Sidebar
         layers={layers}
@@ -51,6 +61,12 @@ export default function App() {
         dateRange={dateRange}
         onDateRangeChange={setDateRange}
         onSearch={handleSearch}
+        spcOutlook={spcOutlook}
+        onSpcChange={setSpcOutlook}
+        alertsOverlay={alertsOverlay}
+        onAlertsChange={setAlertsOverlay}
+        lsrOverlay={lsrOverlay}
+        onLsrChange={setLsrOverlay}
       />
       <DataInspector
         feature={selectedFeature}
