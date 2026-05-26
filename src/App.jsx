@@ -8,9 +8,9 @@ export default function App() {
   const [selectedFeature, setSelectedFeature] = useState(null)
   const [layers, setLayers] = useState({ lines: false, points: false, polygons: false })
   const [dateRange, setDateRange] = useState(() => {
-    const end = new Date()
     const start = new Date()
-    start.setDate(start.getDate() - 3)
+    const end = new Date()
+    end.setDate(end.getDate() + 3)
     const fmt = (d) => d.toISOString().slice(0, 10)
     return { start: fmt(start), end: fmt(end) }
   })

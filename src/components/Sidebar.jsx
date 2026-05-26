@@ -1,14 +1,22 @@
 import { useState } from 'react'
 import { EF_COLORS, EF_LEGEND } from '../constants'
 
-const THIS_YEAR = new Date().getFullYear()
-const YEARS = ['all', ...Array.from({ length: 27 }, (_, i) => String(THIS_YEAR - i))]
+const PRESETS = [
+  { id: '3out', label: 'Next 3 days', days: [0, 3] },
+  { id: '3back', label: 'Past 3 days', days: [-3, 0] },
+  { id: '7back', label: 'Past 7 days', days: [-7, 0] },
+  { id: '14back', label: 'Past 14 days', days: [-14, 0] },
+]
 
-function yearFromRange({ start, end }) {
-  if (!start && !end) return 'all'
-  const sy = start?.slice(0, 4)
-  const ey = end?.slice(0, 4)
-  if (sy && sy === ey && start === `${sy}-01-01` && end === `${ey}-12-31`) return sy
+function presetFromRange({ start, end }) {
+  if (!start || !end) return 'custom'
+  const today = new Date()
+  const fmt = (d) => d.toISOString().slice(0, 10)
+  for (const p of PRESETS) {
+    const s = new Date(today); s.setDate(s.getDate() + p.days[0])
+    const e = new Date(today); e.setDate(e.getDate() + p.days[1])
+    if (start === fmt(s) && end === fmt(e)) return p.id
+  }
   return 'custom'
 }
 
@@ -51,19 +59,21 @@ export default function Sidebar({ layers, onToggleLayer, dateRange, onDateRangeC
   const [layersOpen, setLayersOpen] = useState(true)
   const [legendOpen, setLegendOpen] = useState(true)
 
-  const activeYear = yearFromRange(dateRange)
+  const activePreset = presetFromRange(dateRange)
 
   const daySpan = dateRange.start && dateRange.end
     ? Math.round((new Date(dateRange.end) - new Date(dateRange.start)) / 86400000)
     : null
   const warnLargeRange = daySpan !== null && daySpan > 14
 
-  const handleYearShortcut = (year) => {
-    if (year === 'all') {
-      onDateRangeChange({ start: '', end: '' })
-    } else {
-      onDateRangeChange({ start: `${year}-01-01`, end: `${year}-12-31` })
-    }
+  const handlePresetSelect = (id) => {
+    const preset = PRESETS.find((p) => p.id === id)
+    if (!preset) return
+    const today = new Date()
+    const s = new Date(today); s.setDate(s.getDate() + preset.days[0])
+    const e = new Date(today); e.setDate(e.getDate() + preset.days[1])
+    const fmt = (d) => d.toISOString().slice(0, 10)
+    onDateRangeChange({ start: fmt(s), end: fmt(e) })
   }
 
   const handleDateInput = (key, val) => {
@@ -151,16 +161,14 @@ export default function Sidebar({ layers, onToggleLayer, dateRange, onDateRangeC
         <div className="sidebar__field-label">Date Filter</div>
         <select
           className="sidebar__select"
-          value={activeYear}
-          onChange={(e) => handleYearShortcut(e.target.value)}
+          value={activePreset}
+          onChange={(e) => handlePresetSelect(e.target.value)}
         >
-          {activeYear === 'custom' && (
+          {activePreset === 'custom' && (
             <option value="custom" disabled>Custom range</option>
           )}
-          {YEARS.map((y) => (
-            <option key={y} value={y}>
-              {y === 'all' ? 'All Years' : y}
-            </option>
+          {PRESETS.map((p) => (
+            <option key={p.id} value={p.id}>{p.label}</option>
           ))}
         </select>
         {warnLargeRange && (
