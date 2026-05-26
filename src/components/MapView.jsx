@@ -7,14 +7,14 @@ import 'leaflet/dist/leaflet.css'
 function glowMarker(color) {
   return L.divIcon({
     html: `<div style="
-      width:14px;height:14px;border-radius:50%;
-      border:2px solid ${color};
-      background:${color}2a;
-      box-shadow:0 0 7px ${color},0 0 16px ${color}55;
+      width:12px;height:12px;border-radius:50%;
+      border:1.5px solid ${color};
+      background:${color}33;
+      box-shadow:0 0 5px ${color};
     "></div>`,
     className: '',
-    iconSize: [14, 14],
-    iconAnchor: [7, 7],
+    iconSize: [12, 12],
+    iconAnchor: [6, 6],
   })
 }
 
@@ -28,12 +28,23 @@ function polygonStyle(feature) {
   return { color, weight: 2, opacity: 0.82, fillColor: color, fillOpacity: 0.14 }
 }
 
+const LINE_FIELDS = [
+  'OBJECTID', 'efscale', 'efnum', 'maxwind', 'stormdate', 'starttime', 'endtime',
+  'length', 'width', 'injuries', 'fatalities', 'propdamage', 'cropdamage', 'wfo', 'comments',
+]
+const POINT_FIELDS = [
+  'OBJECTID', 'efscale', 'windspeed', 'stormdate', 'surveydate', 'surveytype',
+  'injuries', 'deaths', 'office', 'damage_txt', 'dod_txt', 'comments', 'lat', 'lon',
+]
+const POLYGON_FIELDS = ['OBJECTID', 'efscale', 'stormdate', 'office', 'comments']
+
 export default function MapView({ layers, dateRange, onFeatureSelect, selectedFeature, onMapReady }) {
   const containerRef = useRef(null)
   const mapRef = useRef(null)
   const layerRefs = useRef({ lines: null, points: null, polygons: null })
   const highlightRef = useRef(null)
   const loadCountRef = useRef(0)
+  const whereDebounceRef = useRef(null)
   const [isLoading, setIsLoading] = useState(false)
 
   useEffect(() => {
@@ -104,12 +115,23 @@ export default function MapView({ layers, dateRange, onFeatureSelect, selectedFe
       return layer
     }
 
-    const linesLayer = makeLayer(LAYER_URLS.lines, 'lines', { style: lineStyle })
+    const linesLayer = makeLayer(LAYER_URLS.lines, 'lines', {
+      style: lineStyle,
+      fields: LINE_FIELDS,
+      simplifyFactor: 0.5,
+      precision: 4,
+    })
     const pointsLayer = makeLayer(LAYER_URLS.points, 'points', {
+      fields: POINT_FIELDS,
       pointToLayer: (gj, latlng) =>
         L.marker(latlng, { icon: glowMarker(getEFColor(gj.properties)) }),
     })
-    const polygonsLayer = makeLayer(LAYER_URLS.polygons, 'polygons', { style: polygonStyle })
+    const polygonsLayer = makeLayer(LAYER_URLS.polygons, 'polygons', {
+      style: polygonStyle,
+      fields: POLYGON_FIELDS,
+      simplifyFactor: 0.5,
+      precision: 4,
+    })
 
     if (layers.lines) linesLayer.addTo(map)
     if (layers.points) pointsLayer.addTo(map)
@@ -141,12 +163,16 @@ export default function MapView({ layers, dateRange, onFeatureSelect, selectedFe
     })
   }, [layers])
 
-  // Date range sync
+  // Date range sync — debounced so rapid typing doesn't fire parallel queries
   useEffect(() => {
-    const where = makeWhere(dateRange.start, dateRange.end)
-    Object.values(layerRefs.current).forEach((layer) => {
-      if (layer?.setWhere) layer.setWhere(where)
-    })
+    clearTimeout(whereDebounceRef.current)
+    whereDebounceRef.current = setTimeout(() => {
+      const where = makeWhere(dateRange.start, dateRange.end)
+      Object.values(layerRefs.current).forEach((layer) => {
+        if (layer?.setWhere) layer.setWhere(where)
+      })
+    }, 500)
+    return () => clearTimeout(whereDebounceRef.current)
   }, [dateRange])
 
   // Clear highlight when inspector closes

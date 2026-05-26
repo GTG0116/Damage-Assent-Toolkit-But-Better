@@ -7,7 +7,13 @@ import './App.css'
 export default function App() {
   const [selectedFeature, setSelectedFeature] = useState(null)
   const [layers, setLayers] = useState({ lines: true, points: true, polygons: false })
-  const [dateRange, setDateRange] = useState({ start: '2024-01-01', end: '2024-12-31' })
+  const [dateRange, setDateRange] = useState(() => {
+    const end = new Date()
+    const start = new Date()
+    start.setDate(start.getDate() - 3)
+    const fmt = (d) => d.toISOString().slice(0, 10)
+    return { start: fmt(start), end: fmt(end) }
+  })
   const mapActionsRef = useRef(null)
 
   const toggleLayer = useCallback((key) => {
