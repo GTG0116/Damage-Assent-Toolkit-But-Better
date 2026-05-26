@@ -6,7 +6,7 @@ import './App.css'
 
 export default function App() {
   const [selectedFeature, setSelectedFeature] = useState(null)
-  const [layers, setLayers] = useState({ lines: true, points: true, polygons: false })
+  const [layers, setLayers] = useState({ lines: false, points: false, polygons: false })
   const [dateRange, setDateRange] = useState(() => {
     const end = new Date()
     const start = new Date()
