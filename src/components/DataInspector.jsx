@@ -1,4 +1,5 @@
-import { EF_COLORS, getEFColor } from '../constants'
+import { useEffect, useState } from 'react'
+import { EF_COLORS, LAYER_URLS, getEFColor } from '../constants'
 
 const POINT_FIELDS = [
   { key: 'efscale', label: 'EF Scale', mono: true, highlight: true },
@@ -66,6 +67,31 @@ export default function DataInspector({ feature, onClose }) {
   const accentColor = getEFColor(props)
   const accentGlow = EF_COLORS[efscale] ? `0 0 16px ${accentColor}55` : 'none'
 
+  const [images, setImages] = useState([])
+  const [imagesLoading, setImagesLoading] = useState(false)
+
+  useEffect(() => {
+    setImages([])
+    if (feature?.type !== 'points') return
+    const oid = feature?.feature?.properties?.OBJECTID
+    if (!oid) return
+
+    setImagesLoading(true)
+    const controller = new AbortController()
+    fetch(`${LAYER_URLS.points}/${oid}/attachments?f=json`, { signal: controller.signal })
+      .then((r) => r.json())
+      .then((data) => {
+        const imgs = (data.attachmentInfos ?? [])
+          .filter((a) => a.contentType?.startsWith('image/'))
+          .map((a) => `${LAYER_URLS.points}/${oid}/attachments/${a.id}`)
+        setImages(imgs)
+      })
+      .catch(() => {})
+      .finally(() => setImagesLoading(false))
+
+    return () => controller.abort()
+  }, [feature])
+
   return (
     <div className={`inspector${open ? ' inspector--open' : ''}`}>
       <div
@@ -104,6 +130,52 @@ export default function DataInspector({ feature, onClose }) {
             </div>
           )
         })}
+
+        {/* Photos section — points only */}
+        {type === 'points' && (
+          <div className="inspector__photos">
+            <div className="inspector__photos-header">
+              <span className="inspector__key">Photos</span>
+              {!imagesLoading && images.length > 0 && (
+                <span className="inspector__photos-count">{images.length}</span>
+              )}
+            </div>
+            {imagesLoading ? (
+              <div className="inspector__photos-loading">
+                <div className="loading-spinner" style={{ width: 11, height: 11 }} />
+                Checking for photos…
+              </div>
+            ) : images.length > 0 ? (
+              <div className="inspector__photo-grid">
+                {images.map((url, i) => (
+                  <a
+                    key={i}
+                    href={url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inspector__photo-link"
+                  >
+                    <img
+                      src={url}
+                      alt={`Survey photo ${i + 1}`}
+                      className="inspector__photo-thumb"
+                      onError={(e) => { e.currentTarget.parentElement.style.display = 'none' }}
+                    />
+                    <div className="inspector__photo-overlay">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                        <polyline points="15 3 21 3 21 9"/>
+                        <line x1="10" y1="14" x2="21" y2="3"/>
+                      </svg>
+                    </div>
+                  </a>
+                ))}
+              </div>
+            ) : (
+              <div className="inspector__photos-empty">No photos attached</div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )

@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import L from 'leaflet'
 import { featureLayer } from 'esri-leaflet'
-import { EF_COLORS, LAYER_URLS, getEFColor, makeWhere } from '../constants'
+import {
+  EF_COLORS, LAYER_URLS, getEFColor, makeWhere,
+  getSpcColor, getAlertColor, getLsrColor,
+} from '../constants'
 import 'leaflet/dist/leaflet.css'
 
 function glowMarker(color) {
@@ -38,13 +41,19 @@ const POINT_FIELDS = [
 ]
 const POLYGON_FIELDS = ['OBJECTID', 'efscale', 'stormdate', 'office', 'comments']
 
-export default function MapView({ layers, dateRange, onFeatureSelect, selectedFeature, onMapReady }) {
+export default function MapView({
+  layers, dateRange, onFeatureSelect, selectedFeature, onMapReady,
+  spcOutlook, alertsOverlay, lsrOverlay,
+}) {
   const containerRef = useRef(null)
   const mapRef = useRef(null)
   const layerRefs = useRef({ lines: null, points: null, polygons: null })
   const highlightRef = useRef(null)
   const loadCountRef = useRef(0)
   const whereDebounceRef = useRef(null)
+  const spcLayerRef = useRef(null)
+  const alertsLayerRef = useRef(null)
+  const lsrLayerRef = useRef(null)
   const [isLoading, setIsLoading] = useState(false)
 
   useEffect(() => {
@@ -182,6 +191,141 @@ export default function MapView({ layers, dateRange, onFeatureSelect, selectedFe
       highlightRef.current = null
     }
   }, [selectedFeature])
+
+  // SPC Categorical Outlook layer
+  useEffect(() => {
+    const map = mapRef.current
+    if (spcLayerRef.current) {
+      if (map) map.removeLayer(spcLayerRef.current)
+      spcLayerRef.current = null
+    }
+    if (!spcOutlook.enabled || !spcOutlook.date || !spcOutlook.time || !map) return
+
+    const controller = new AbortController()
+    const [year, month, day] = spcOutlook.date.split('-')
+    const dateStr = `${year}${month}${day}`
+    const url = `https://www.spc.noaa.gov/products/outlook/archive/${year}/day1otlk_${dateStr}_${spcOutlook.time}_cat.nolyr.geojson`
+
+    fetch(url, { signal: controller.signal })
+      .then((r) => {
+        if (!r.ok) throw new Error(`SPC ${r.status}`)
+        return r.json()
+      })
+      .then((data) => {
+        if (!mapRef.current || controller.signal.aborted) return
+        const layer = L.geoJSON(data, {
+          style: (feature) => {
+            const label = feature.properties?.LABEL ?? feature.properties?.label ?? ''
+            const color = getSpcColor(label)
+            return { color, weight: 1.5, opacity: 0.9, fillColor: color, fillOpacity: 0.28 }
+          },
+          onEachFeature: (feature, lyr) => {
+            const label = feature.properties?.LABEL ?? feature.properties?.label ?? 'Unknown'
+            const label2 = feature.properties?.LABEL2 ?? feature.properties?.label2 ?? ''
+            lyr.bindTooltip(
+              `<b>SPC: ${label}</b>${label2 ? `<br>${label2}` : ''}`,
+              { sticky: true, className: 'map-tooltip' }
+            )
+          },
+        }).addTo(mapRef.current)
+        spcLayerRef.current = layer
+      })
+      .catch(() => {})
+
+    return () => controller.abort()
+  }, [spcOutlook])
+
+  // NWS Alerts layer
+  useEffect(() => {
+    const map = mapRef.current
+    if (alertsLayerRef.current) {
+      if (map) map.removeLayer(alertsLayerRef.current)
+      alertsLayerRef.current = null
+    }
+    if (!alertsOverlay.enabled || !alertsOverlay.date || !map) return
+
+    const controller = new AbortController()
+    const startISO = `${alertsOverlay.date}T${alertsOverlay.time || '00:00'}:00Z`
+    const endDt = new Date(startISO)
+    endDt.setUTCHours(endDt.getUTCHours() + 24)
+    const endISO = endDt.toISOString().replace('.000Z', 'Z')
+    const url = `https://api.weather.gov/alerts?start=${encodeURIComponent(startISO)}&end=${encodeURIComponent(endISO)}&limit=500&status=actual`
+
+    fetch(url, { signal: controller.signal, headers: { Accept: 'application/geo+json' } })
+      .then((r) => r.json())
+      .then((data) => {
+        if (!mapRef.current || controller.signal.aborted) return
+        const features = (data.features ?? []).filter((f) => f.geometry)
+        const layer = L.geoJSON({ type: 'FeatureCollection', features }, {
+          style: (feature) => {
+            const color = getAlertColor(feature.properties?.event ?? '')
+            return { color, weight: 2, opacity: 0.88, fillColor: color, fillOpacity: 0.22 }
+          },
+          onEachFeature: (feature, lyr) => {
+            const event = feature.properties?.event ?? 'Alert'
+            const area = feature.properties?.areaDesc ?? ''
+            lyr.bindTooltip(
+              `<b>${event}</b>${area ? `<br>${area}` : ''}`,
+              { sticky: true, className: 'map-tooltip' }
+            )
+          },
+        }).addTo(mapRef.current)
+        alertsLayerRef.current = layer
+      })
+      .catch(() => {})
+
+    return () => controller.abort()
+  }, [alertsOverlay])
+
+  // LSR layer (IEM)
+  useEffect(() => {
+    const map = mapRef.current
+    if (lsrLayerRef.current) {
+      if (map) map.removeLayer(lsrLayerRef.current)
+      lsrLayerRef.current = null
+    }
+    if (!lsrOverlay.enabled || !lsrOverlay.date || !map) return
+
+    const controller = new AbortController()
+    const startISO = `${lsrOverlay.date}T${lsrOverlay.time || '00:00'}:00Z`
+    const endDt = new Date(startISO)
+    endDt.setUTCHours(endDt.getUTCHours() + 24)
+    const endISO = endDt.toISOString().replace('.000Z', 'Z')
+    const url = `https://mesonet.agron.iastate.edu/geojson/lsr.py?sts=${encodeURIComponent(startISO)}&ets=${encodeURIComponent(endISO)}`
+
+    fetch(url, { signal: controller.signal })
+      .then((r) => r.json())
+      .then((data) => {
+        if (!mapRef.current || controller.signal.aborted) return
+        const layer = L.geoJSON(data, {
+          pointToLayer: (feature, latlng) => {
+            const color = getLsrColor(feature.properties?.typetext ?? '')
+            return L.circleMarker(latlng, {
+              radius: 6,
+              fillColor: color,
+              color: '#000',
+              weight: 1,
+              opacity: 1,
+              fillOpacity: 0.9,
+            })
+          },
+          onEachFeature: (feature, lyr) => {
+            const p = feature.properties ?? {}
+            const type = p.typetext ?? 'LSR'
+            const mag = p.magnitude ? ` ${p.magnitude}` : ''
+            const city = p.city ? ` — ${p.city}, ${p.st ?? ''}` : ''
+            lyr.bindTooltip(
+              `<b>${type}${mag}</b>${city}`,
+              { sticky: true, className: 'map-tooltip' }
+            )
+          },
+        }).addTo(mapRef.current)
+        lsrLayerRef.current = layer
+      })
+      .catch(() => {})
+
+    return () => controller.abort()
+  }, [lsrOverlay])
 
   return (
     <>

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { EF_COLORS, EF_LEGEND } from '../constants'
+import { EF_COLORS, EF_LEGEND, SPC_COLORS, SPC_LEGEND, SPC_TIMES } from '../constants'
 
 const PRESETS = [
   { id: '3out', label: 'Next 3 days', days: [0, 3] },
@@ -54,10 +54,20 @@ const LAYERS = [
   },
 ]
 
-export default function Sidebar({ layers, onToggleLayer, dateRange, onDateRangeChange, onSearch }) {
+export default function Sidebar({
+  layers, onToggleLayer,
+  dateRange, onDateRangeChange,
+  onSearch,
+  spcOutlook, onSpcChange,
+  alertsOverlay, onAlertsChange,
+  lsrOverlay, onLsrChange,
+}) {
   const [query, setQuery] = useState('')
   const [layersOpen, setLayersOpen] = useState(true)
-  const [legendOpen, setLegendOpen] = useState(true)
+  const [legendOpen, setLegendOpen] = useState(false)
+  const [spcOpen, setSpcOpen] = useState(false)
+  const [alertsOpen, setAlertsOpen] = useState(false)
+  const [lsrOpen, setLsrOpen] = useState(false)
 
   const activePreset = presetFromRange(dateRange)
 
@@ -127,10 +137,10 @@ export default function Sidebar({ layers, onToggleLayer, dateRange, onDateRangeC
 
       <div className="sidebar__section-divider" />
 
-      {/* Layers */}
+      {/* DAT Layers */}
       <div className="sidebar__section">
         <button className="sidebar__accordion" onClick={() => setLayersOpen((v) => !v)}>
-          <span>Layers</span>
+          <span>Damage Layers</span>
           <span className={`sidebar__chevron${layersOpen ? ' open' : ''}`}>›</span>
         </button>
         {layersOpen && (
@@ -201,11 +211,161 @@ export default function Sidebar({ layers, onToggleLayer, dateRange, onDateRangeC
         </div>
       </div>
 
+      <div className="sidebar__section-divider" />
+
+      {/* SPC Day 1 Outlook */}
+      <div className="sidebar__section">
+        <button className="sidebar__accordion" onClick={() => setSpcOpen((v) => !v)}>
+          <span>SPC Day 1 Outlook</span>
+          <div className="sidebar__accordion-right">
+            <div
+              className={`sidebar__toggle sidebar__toggle--sm${spcOutlook.enabled ? ' on' : ''}`}
+              role="switch"
+              aria-checked={spcOutlook.enabled}
+              onClick={(e) => {
+                e.stopPropagation()
+                onSpcChange({ ...spcOutlook, enabled: !spcOutlook.enabled })
+              }}
+            />
+            <span className={`sidebar__chevron${spcOpen ? ' open' : ''}`}>›</span>
+          </div>
+        </button>
+        {spcOpen && (
+          <div className="sidebar__overlay-controls">
+            <div className="sidebar__date-row">
+              <span className="sidebar__date-label">Date</span>
+              <input
+                type="date"
+                className="sidebar__date-input"
+                value={spcOutlook.date}
+                onChange={(e) => onSpcChange({ ...spcOutlook, date: e.target.value })}
+              />
+            </div>
+            <div className="sidebar__date-row" style={{ marginTop: 5 }}>
+              <span className="sidebar__date-label">Time</span>
+              <select
+                className="sidebar__select sidebar__select--sm"
+                value={spcOutlook.time}
+                onChange={(e) => onSpcChange({ ...spcOutlook, time: e.target.value })}
+              >
+                {SPC_TIMES.map((t) => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="sidebar__overlay-legend">
+              {SPC_LEGEND.map(({ key, label, desc }) => (
+                <div key={key} className="sidebar__legend-row">
+                  <div
+                    className="sidebar__legend-swatch"
+                    style={{ background: SPC_COLORS[key], boxShadow: `0 0 5px ${SPC_COLORS[key]}88` }}
+                  />
+                  <span className="sidebar__legend-label" style={{ width: 42 }}>{label}</span>
+                  <span className="sidebar__legend-range">{desc}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="sidebar__section-divider" />
+
+      {/* NWS Alerts */}
+      <div className="sidebar__section">
+        <button className="sidebar__accordion" onClick={() => setAlertsOpen((v) => !v)}>
+          <span>NWS Alerts</span>
+          <div className="sidebar__accordion-right">
+            <div
+              className={`sidebar__toggle sidebar__toggle--sm${alertsOverlay.enabled ? ' on' : ''}`}
+              role="switch"
+              aria-checked={alertsOverlay.enabled}
+              onClick={(e) => {
+                e.stopPropagation()
+                onAlertsChange({ ...alertsOverlay, enabled: !alertsOverlay.enabled })
+              }}
+            />
+            <span className={`sidebar__chevron${alertsOpen ? ' open' : ''}`}>›</span>
+          </div>
+        </button>
+        {alertsOpen && (
+          <div className="sidebar__overlay-controls">
+            <div className="sidebar__overlay-note">
+              Shows active alerts in a 24-hour window from the selected date/time (UTC).
+            </div>
+            <div className="sidebar__date-row">
+              <span className="sidebar__date-label">Date</span>
+              <input
+                type="date"
+                className="sidebar__date-input"
+                value={alertsOverlay.date}
+                onChange={(e) => onAlertsChange({ ...alertsOverlay, date: e.target.value })}
+              />
+            </div>
+            <div className="sidebar__date-row" style={{ marginTop: 5 }}>
+              <span className="sidebar__date-label">Time</span>
+              <input
+                type="time"
+                className="sidebar__date-input"
+                value={alertsOverlay.time}
+                onChange={(e) => onAlertsChange({ ...alertsOverlay, time: e.target.value })}
+              />
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="sidebar__section-divider" />
+
+      {/* Local Storm Reports */}
+      <div className="sidebar__section">
+        <button className="sidebar__accordion" onClick={() => setLsrOpen((v) => !v)}>
+          <span>Local Storm Reports</span>
+          <div className="sidebar__accordion-right">
+            <div
+              className={`sidebar__toggle sidebar__toggle--sm${lsrOverlay.enabled ? ' on' : ''}`}
+              role="switch"
+              aria-checked={lsrOverlay.enabled}
+              onClick={(e) => {
+                e.stopPropagation()
+                onLsrChange({ ...lsrOverlay, enabled: !lsrOverlay.enabled })
+              }}
+            />
+            <span className={`sidebar__chevron${lsrOpen ? ' open' : ''}`}>›</span>
+          </div>
+        </button>
+        {lsrOpen && (
+          <div className="sidebar__overlay-controls">
+            <div className="sidebar__overlay-note">
+              Shows IEM LSRs in a 24-hour window from the selected date/time (UTC).
+            </div>
+            <div className="sidebar__date-row">
+              <span className="sidebar__date-label">Date</span>
+              <input
+                type="date"
+                className="sidebar__date-input"
+                value={lsrOverlay.date}
+                onChange={(e) => onLsrChange({ ...lsrOverlay, date: e.target.value })}
+              />
+            </div>
+            <div className="sidebar__date-row" style={{ marginTop: 5 }}>
+              <span className="sidebar__date-label">Time</span>
+              <input
+                type="time"
+                className="sidebar__date-input"
+                value={lsrOverlay.time}
+                onChange={(e) => onLsrChange({ ...lsrOverlay, time: e.target.value })}
+              />
+            </div>
+          </div>
+        )}
+      </div>
+
       <div className="sidebar__spacer" />
 
       <div className="sidebar__section-divider" />
 
-      {/* Legend */}
+      {/* EF Scale Legend */}
       <div className="sidebar__section">
         <button className="sidebar__accordion" onClick={() => setLegendOpen((v) => !v)}>
           <span>EF Scale</span>
