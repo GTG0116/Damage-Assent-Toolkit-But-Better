@@ -146,7 +146,6 @@ export default function Sidebar({ layers, onToggleLayer, dateRange, onDateRangeC
                   className={`sidebar__toggle${layers[key] ? ' on' : ''}`}
                   role="switch"
                   aria-checked={layers[key]}
-                  onClick={(e) => e.stopPropagation()}
                 />
               </div>
             ))}
