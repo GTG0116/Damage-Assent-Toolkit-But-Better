@@ -267,6 +267,55 @@
   color: #E2E8F0;
 }
 
+/* ─── Date range inputs ───────────────────────────────────── */
+.sidebar__date-inputs {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 7px;
+}
+
+.sidebar__date-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sidebar__date-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #475569;
+  width: 28px;
+  flex-shrink: 0;
+}
+
+.sidebar__date-input {
+  flex: 1;
+  min-width: 0;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(148, 163, 184, 0.13);
+  border-radius: 9px;
+  color: #E2E8F0;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11.5px;
+  padding: 7px 10px;
+  outline: none;
+  color-scheme: dark;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.sidebar__date-input:focus {
+  border-color: rgba(0, 245, 255, 0.35);
+  box-shadow: 0 0 0 3px rgba(0, 245, 255, 0.06);
+}
+
+.sidebar__date-input::-webkit-calendar-picker-indicator {
+  filter: invert(0.5) sepia(1) saturate(2) hue-rotate(160deg);
+  cursor: pointer;
+  opacity: 0.6;
+}
+
 /* ─── Layer toggles ───────────────────────────────────────── */
 .sidebar__layer-list {
   display: flex;

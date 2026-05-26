@@ -28,7 +28,7 @@ function polygonStyle(feature) {
   return { color, weight: 2, opacity: 0.82, fillColor: color, fillOpacity: 0.14 }
 }
 
-export default function MapView({ layers, yearFilter, onFeatureSelect, selectedFeature, onMapReady }) {
+export default function MapView({ layers, dateRange, onFeatureSelect, selectedFeature, onMapReady }) {
   const containerRef = useRef(null)
   const mapRef = useRef(null)
   const layerRefs = useRef({ lines: null, points: null, polygons: null })
@@ -60,7 +60,7 @@ export default function MapView({ layers, yearFilter, onFeatureSelect, selectedF
       setIsLoading(loadCountRef.current > 0)
     }
 
-    const where = makeWhere(yearFilter)
+    const where = makeWhere(dateRange.start, dateRange.end)
 
     function makeLayer(url, type, opts) {
       const layer = featureLayer({ url, where, ...opts })
@@ -141,13 +141,13 @@ export default function MapView({ layers, yearFilter, onFeatureSelect, selectedF
     })
   }, [layers])
 
-  // Year filter sync
+  // Date range sync
   useEffect(() => {
-    const where = makeWhere(yearFilter)
+    const where = makeWhere(dateRange.start, dateRange.end)
     Object.values(layerRefs.current).forEach((layer) => {
       if (layer?.setWhere) layer.setWhere(where)
     })
-  }, [yearFilter])
+  }, [dateRange])
 
   // Clear highlight when inspector closes
   useEffect(() => {

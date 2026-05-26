@@ -4,6 +4,14 @@ import { EF_COLORS, EF_LEGEND } from '../constants'
 const THIS_YEAR = new Date().getFullYear()
 const YEARS = ['all', ...Array.from({ length: 27 }, (_, i) => String(THIS_YEAR - i))]
 
+function yearFromRange({ start, end }) {
+  if (!start && !end) return 'all'
+  const sy = start?.slice(0, 4)
+  const ey = end?.slice(0, 4)
+  if (sy && sy === ey && start === `${sy}-01-01` && end === `${ey}-12-31`) return sy
+  return 'custom'
+}
+
 const LAYERS = [
   {
     key: 'lines',
@@ -38,10 +46,24 @@ const LAYERS = [
   },
 ]
 
-export default function Sidebar({ layers, onToggleLayer, yearFilter, onYearChange, onSearch }) {
+export default function Sidebar({ layers, onToggleLayer, dateRange, onDateRangeChange, onSearch }) {
   const [query, setQuery] = useState('')
   const [layersOpen, setLayersOpen] = useState(true)
   const [legendOpen, setLegendOpen] = useState(true)
+
+  const activeYear = yearFromRange(dateRange)
+
+  const handleYearShortcut = (year) => {
+    if (year === 'all') {
+      onDateRangeChange({ start: '', end: '' })
+    } else {
+      onDateRangeChange({ start: `${year}-01-01`, end: `${year}-12-31` })
+    }
+  }
+
+  const handleDateInput = (key, val) => {
+    onDateRangeChange({ ...dateRange, [key]: val })
+  }
 
   const handleSubmit = (e) => {
     e.preventDefault()
@@ -119,20 +141,43 @@ export default function Sidebar({ layers, onToggleLayer, yearFilter, onYearChang
 
       <div className="sidebar__section-divider" />
 
-      {/* Year filter */}
+      {/* Date filter */}
       <div className="sidebar__section">
-        <div className="sidebar__field-label">Year Filter</div>
+        <div className="sidebar__field-label">Date Filter</div>
         <select
           className="sidebar__select"
-          value={yearFilter}
-          onChange={(e) => onYearChange(e.target.value)}
+          value={activeYear}
+          onChange={(e) => handleYearShortcut(e.target.value)}
         >
+          {activeYear === 'custom' && (
+            <option value="custom" disabled>Custom range</option>
+          )}
           {YEARS.map((y) => (
             <option key={y} value={y}>
               {y === 'all' ? 'All Years' : y}
             </option>
           ))}
         </select>
+        <div className="sidebar__date-inputs">
+          <div className="sidebar__date-row">
+            <span className="sidebar__date-label">From</span>
+            <input
+              type="date"
+              className="sidebar__date-input"
+              value={dateRange.start}
+              onChange={(e) => handleDateInput('start', e.target.value)}
+            />
+          </div>
+          <div className="sidebar__date-row">
+            <span className="sidebar__date-label">To</span>
+            <input
+              type="date"
+              className="sidebar__date-input"
+              value={dateRange.end}
+              onChange={(e) => handleDateInput('end', e.target.value)}
+            />
+          </div>
+        </div>
       </div>
 
       <div className="sidebar__spacer" />

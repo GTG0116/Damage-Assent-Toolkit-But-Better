@@ -40,10 +40,11 @@ export function getEFColor(properties = {}) {
   return EF_COLORS[numKey] ?? EF_COLORS.default
 }
 
-export function makeWhere(yearFilter) {
-  if (!yearFilter || yearFilter === 'all') return '1=1'
-  const y = parseInt(yearFilter, 10)
-  const start = Date.UTC(y, 0, 1)
-  const end = Date.UTC(y + 1, 0, 1)
-  return `stormdate >= ${start} AND stormdate < ${end}`
+// ArcGIS REST expects timestamp literals — epoch ms are not reliably accepted
+export function makeWhere(start, end) {
+  if (!start && !end) return '1=1'
+  if (start && end)
+    return `stormdate >= timestamp '${start} 00:00:00' AND stormdate <= timestamp '${end} 23:59:59'`
+  if (start) return `stormdate >= timestamp '${start} 00:00:00'`
+  return `stormdate <= timestamp '${end} 23:59:59'`
 }

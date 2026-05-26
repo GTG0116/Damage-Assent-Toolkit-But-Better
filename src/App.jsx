@@ -7,7 +7,7 @@ import './App.css'
 export default function App() {
   const [selectedFeature, setSelectedFeature] = useState(null)
   const [layers, setLayers] = useState({ lines: true, points: true, polygons: false })
-  const [yearFilter, setYearFilter] = useState('2024')
+  const [dateRange, setDateRange] = useState({ start: '2024-01-01', end: '2024-12-31' })
   const mapActionsRef = useRef(null)
 
   const toggleLayer = useCallback((key) => {
@@ -34,7 +34,7 @@ export default function App() {
     <div className="app">
       <MapView
         layers={layers}
-        yearFilter={yearFilter}
+        dateRange={dateRange}
         onFeatureSelect={setSelectedFeature}
         selectedFeature={selectedFeature}
         onMapReady={(actions) => { mapActionsRef.current = actions }}
@@ -42,8 +42,8 @@ export default function App() {
       <Sidebar
         layers={layers}
         onToggleLayer={toggleLayer}
-        yearFilter={yearFilter}
-        onYearChange={setYearFilter}
+        dateRange={dateRange}
+        onDateRangeChange={setDateRange}
         onSearch={handleSearch}
       />
       <DataInspector
