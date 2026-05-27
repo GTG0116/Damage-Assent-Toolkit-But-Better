@@ -438,18 +438,24 @@ export default function MapView({
     if (isoStr) radarLayerRef.current.setParams({ TIME: isoStr })
   }, [radarOverlay.time, radarOverlay.enabled, radarOverlay.date])
 
-  // ── Radar standalone playback loop ────────────────────────────────────────
+  // ── Radar standalone playback — seek to start position when playback begins or date changes
   useEffect(() => {
-    if (!radarOverlay.playing || !radarOverlay.enabled || pathAnim.playing) return
-
+    if (!radarOverlay.playing || !radarOverlay.enabled) return
     const frames = generateRadarFrames(radarOverlay.date)
     if (!frames.length) return
-
     const [hh = '0', mm = '0'] = (radarOverlay.time || '00:00').split(':')
     radarFrameIdxRef.current = Math.min(
       Math.floor((parseInt(hh) * 60 + parseInt(mm)) / 5),
       frames.length - 1
     )
+  }, [radarOverlay.playing, radarOverlay.date, radarOverlay.enabled])
+
+  // ── Radar standalone playback — manage interval (speed changes don't reset position) ─
+  useEffect(() => {
+    if (!radarOverlay.playing || !radarOverlay.enabled || pathAnim.playing) return
+
+    const frames = generateRadarFrames(radarOverlay.date)
+    if (!frames.length) return
 
     const interval = setInterval(() => {
       radarFrameIdxRef.current = (radarFrameIdxRef.current + 1) % frames.length
@@ -459,7 +465,7 @@ export default function MapView({
     }, radarOverlay.speed)
 
     return () => clearInterval(interval)
-  }, [radarOverlay.playing, radarOverlay.enabled, radarOverlay.date, radarOverlay.speed])
+  }, [radarOverlay.playing, radarOverlay.enabled, radarOverlay.date, radarOverlay.speed, pathAnim.playing])
 
   // ── Path animation — setup overlays + fetch full-res survey points ────────
   useEffect(() => {

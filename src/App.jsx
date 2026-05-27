@@ -19,6 +19,7 @@ function toMs(val) {
 export default function App() {
   const [selectedFeature, setSelectedFeature] = useState(null)
   const [layers, setLayers] = useState({ lines: false, points: false, polygons: false })
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const [dateRange, setDateRange] = useState(() => {
     const start = new Date()
     const end = new Date()
@@ -109,7 +110,7 @@ export default function App() {
     // 1 step per coordinate keeps the path drawing smooth; cap at 300 steps
     const totalSteps = Math.max(60, Math.min(coords.length, 300))
 
-    setPathAnim({ active: true, feature: fullFeature, playing: false, step: 0, totalSteps, speed: 100 })
+    setPathAnim({ active: true, feature: fullFeature, playing: false, step: 0, totalSteps, speed: 120 })
     setRadarOverlay((prev) => ({ ...prev, enabled: true, date: dateStr, time: '00:00', playing: false }))
     setLsrOverlay((prev) => ({ ...prev, enabled: true, date: dateStr, time: '00:00' }))
     setAlertsOverlay((prev) => ({ ...prev, enabled: true, date: dateStr, time: '00:00' }))
@@ -138,6 +139,26 @@ export default function App() {
 
   return (
     <div className="app">
+      {sidebarOpen && (
+        <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
+      )}
+
+      <button
+        className={`mobile-menu-btn${sidebarOpen ? ' mobile-menu-btn--open' : ''}`}
+        onClick={() => setSidebarOpen((v) => !v)}
+        aria-label={sidebarOpen ? 'Close menu' : 'Open menu'}
+      >
+        {sidebarOpen ? (
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        ) : (
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+          </svg>
+        )}
+      </button>
+
       <MapView
         layers={layers}
         dateRange={dateRange}
@@ -154,6 +175,8 @@ export default function App() {
         onPathAnimDone={handlePathAnimDone}
       />
       <Sidebar
+        mobileOpen={sidebarOpen}
+        onMobileClose={() => setSidebarOpen(false)}
         layers={layers}
         onToggleLayer={toggleLayer}
         dateRange={dateRange}
