@@ -30,10 +30,12 @@ function toMs(val) {
   return isNaN(d) ? null : d.getTime()
 }
 
+const UTC_MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 function fmtUtc(ms) {
   if (!ms) return null
   const d = new Date(ms)
-  return d.toUTCString().slice(0, 25) + ' UTC'
+  const p = (n) => String(n).padStart(2, '0')
+  return `${UTC_MONTHS_SHORT[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())} UTC`
 }
 
 function interpAnimTime(pathAnim) {

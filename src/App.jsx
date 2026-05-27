@@ -2,7 +2,7 @@ import { useState, useCallback, useRef } from 'react'
 import MapView from './components/MapView'
 import Sidebar from './components/Sidebar'
 import DataInspector from './components/DataInspector'
-import { FILTERED_ALERT_TYPES, LAYER_URLS } from './constants'
+import { FILTERED_ALERT_TYPES, LAYER_URLS, EF_COLORS } from './constants'
 import './App.css'
 
 function todayStr() {
@@ -20,6 +20,7 @@ export default function App() {
   const [selectedFeature, setSelectedFeature] = useState(null)
   const [layers, setLayers] = useState({ lines: false, points: false, polygons: false })
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [inspectorMinimized, setInspectorMinimized] = useState(false)
   const [dateRange, setDateRange] = useState(() => {
     const start = new Date()
     const end = new Date()
@@ -63,6 +64,7 @@ export default function App() {
   // so the animation uses the full-resolution geometry.
   const handleFeatureSelect = useCallback(async (sel) => {
     setSelectedFeature(sel)
+    setInspectorMinimized(false)
     if (!sel) {
       setPathAnim((prev) => ({ ...prev, active: false, playing: false, step: 0, feature: null }))
       return
@@ -137,6 +139,14 @@ export default function App() {
     setPathAnim((prev) => ({ ...prev, active: false, playing: false, step: 0, feature: null }))
   }, [])
 
+  const animEfKey = pathAnim.feature
+    ? (pathAnim.feature.properties?.efscale ?? '').toString().toUpperCase().trim()
+    : ''
+  const animEfColor = EF_COLORS[animEfKey] ?? EF_COLORS.default
+  const animProgress = pathAnim.totalSteps > 0
+    ? Math.round((pathAnim.step / pathAnim.totalSteps) * 100)
+    : 0
+
   return (
     <div className="app">
       {sidebarOpen && (
@@ -199,7 +209,37 @@ export default function App() {
       <DataInspector
         feature={selectedFeature}
         onClose={() => handleFeatureSelect(null)}
+        minimized={inspectorMinimized}
+        onToggleMinimize={() => setInspectorMinimized((v) => !v)}
       />
+
+      {/* Mobile-only playback bar — floats above the inspector bottom sheet */}
+      {pathAnim.active && (
+        <div className={`mobile-playback-bar${selectedFeature && !inspectorMinimized ? ' mobile-playback-bar--above-sheet' : ''}`}>
+          <button
+            className="mobile-playback-btn"
+            onClick={() => setPathAnim((prev) => ({ ...prev, playing: !prev.playing }))}
+            aria-label={pathAnim.playing ? 'Pause' : 'Play'}
+          >
+            {pathAnim.playing ? (
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                <rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>
+              </svg>
+            ) : (
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                <polygon points="5,3 19,12 5,21"/>
+              </svg>
+            )}
+          </button>
+          <div className="mobile-playback-track">
+            <div className="mobile-playback-fill" style={{ width: `${animProgress}%`, background: animEfColor }} />
+          </div>
+          {animEfKey && (
+            <span className="mobile-playback-ef" style={{ color: animEfColor }}>{animEfKey}</span>
+          )}
+          <span className="mobile-playback-pct">{animProgress}%</span>
+        </div>
+      )}
     </div>
   )
 }

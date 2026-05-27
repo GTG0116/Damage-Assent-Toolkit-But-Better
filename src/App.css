@@ -529,7 +529,7 @@
   backdrop-filter: blur(22px);
   -webkit-backdrop-filter: blur(22px);
   border-left: 1px solid rgba(148, 163, 184, 0.09);
-  transition: right 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: right 0.35s cubic-bezier(0.4, 0, 0.2, 1), bottom 0.3s ease;
   overflow: hidden;
 }
 
@@ -546,6 +546,48 @@
   align-items: flex-start;
   flex-shrink: 0;
   transition: border-left-color 0.35s ease;
+}
+
+/* Inspector action buttons group (minimize + close) */
+.inspector__actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.inspector__minimize {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(148, 163, 184, 0.13);
+  border-radius: 7px;
+  color: #64748B;
+  cursor: pointer;
+  padding: 5px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  transition: background 0.2s, color 0.2s;
+  flex-shrink: 0;
+}
+
+.inspector__minimize:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #F8FAFC;
+}
+
+/* Inspector minimized — desktop: float as strip in bottom-right */
+.inspector--open.inspector--minimized {
+  top: auto;
+  bottom: 24px;
+}
+
+.inspector--minimized .inspector__body {
+  display: none;
+}
+
+.inspector--minimized .inspector__header {
+  border-bottom: none;
 }
 
 .inspector__title {
@@ -1004,6 +1046,11 @@
   line-height: 1.3;
 }
 
+/* ─── Mobile playback bar (hidden on desktop) ────────────── */
+.mobile-playback-bar {
+  display: none;
+}
+
 /* ─── Mobile menu button (hidden on desktop) ──────────────── */
 .mobile-menu-btn {
   display: none;
@@ -1131,5 +1178,96 @@
   /* Ensure sidebar header has room so content doesn't overlap hamburger */
   .sidebar__header {
     padding-top: 18px;
+  }
+
+  /* Inspector minimized on mobile: collapses to 64px strip at bottom */
+  .inspector--open.inspector--minimized {
+    bottom: 0;
+    max-height: 64px;
+    overflow: hidden;
+    top: auto;
+  }
+
+  /* Remove the expanded-state pull handle when minimized */
+  .inspector--minimized .inspector__header::before {
+    display: none;
+  }
+
+  .inspector--minimized .inspector__header {
+    padding-top: 16px;
+  }
+
+  /* Mobile playback bar */
+  .mobile-playback-bar {
+    display: flex;
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: 72px;
+    z-index: 41;
+    background: rgba(13, 18, 30, 0.96);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(0, 245, 255, 0.22);
+    border-radius: 12px;
+    padding: 10px 14px;
+    align-items: center;
+    gap: 10px;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+    transition: bottom 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  /* When inspector is expanded (not minimized), float above the sheet */
+  .mobile-playback-bar--above-sheet {
+    bottom: calc(80vh + 8px);
+  }
+
+  .mobile-playback-btn {
+    background: rgba(0, 245, 255, 0.1);
+    border: 1px solid rgba(0, 245, 255, 0.3);
+    border-radius: 8px;
+    color: #00F5FF;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.2s;
+  }
+
+  .mobile-playback-btn:hover {
+    background: rgba(0, 245, 255, 0.18);
+  }
+
+  .mobile-playback-track {
+    flex: 1;
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+  }
+
+  .mobile-playback-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.1s linear;
+  }
+
+  .mobile-playback-ef {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 600;
+    flex-shrink: 0;
+  }
+
+  .mobile-playback-pct {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: #475569;
+    flex-shrink: 0;
+    min-width: 30px;
+    text-align: right;
   }
 }
