@@ -93,6 +93,7 @@ const ANIM_SPEEDS = [
 ]
 
 export default function Sidebar({
+  mobileOpen, onMobileClose,
   layers, onToggleLayer,
   dateRange, onDateRangeChange,
   onSearch,
@@ -148,7 +149,7 @@ export default function Sidebar({
   const animColor = animEF ? (EF_COLORS[animEF] ?? EF_COLORS.default) : EF_COLORS.default
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar${mobileOpen ? ' sidebar--mobile-open' : ''}`}>
       {/* Header */}
       <div className="sidebar__header">
         <div className="sidebar__logo">
