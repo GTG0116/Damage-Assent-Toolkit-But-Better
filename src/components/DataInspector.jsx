@@ -42,12 +42,15 @@ const FIELD_MAP = { lines: LINE_FIELDS, points: POINT_FIELDS, polygons: POLYGON_
 
 const TYPE_LABELS = { lines: 'Damage Track', points: 'Survey Point', polygons: 'Survey Area' }
 
+const UTC_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+const pad2 = (n) => String(n).padStart(2, '0')
+
 function fmt(field, value) {
   if (value === null || value === undefined || value === '') return null
   if (field.date) {
     const d = new Date(value)
     if (isNaN(d)) return String(value)
-    return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+    return `${UTC_MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()} ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())} UTC`
   }
   if (field.currency) {
     const n = parseFloat(value)
@@ -57,7 +60,7 @@ function fmt(field, value) {
   return String(value)
 }
 
-export default function DataInspector({ feature, onClose }) {
+export default function DataInspector({ feature, onClose, minimized, onToggleMinimize }) {
   const open = !!feature
   const props = feature?.feature?.properties ?? {}
   const type = feature?.type ?? 'points'
@@ -93,7 +96,7 @@ export default function DataInspector({ feature, onClose }) {
   }, [feature])
 
   return (
-    <div className={`inspector${open ? ' inspector--open' : ''}`}>
+    <div className={`inspector${open ? ' inspector--open' : ''}${minimized ? ' inspector--minimized' : ''}`}>
       <div
         className="inspector__header"
         style={{ borderLeftColor: open ? accentColor : 'transparent' }}
@@ -105,9 +108,24 @@ export default function DataInspector({ feature, onClose }) {
           >
             {efscale}
           </span>
-          <span className="inspector__type-label">{TYPE_LABELS[type] ?? 'Damage Record'}</span>
+          {!minimized && (
+            <span className="inspector__type-label">{TYPE_LABELS[type] ?? 'Damage Record'}</span>
+          )}
         </div>
-        <button className="inspector__close" onClick={onClose}>✕</button>
+        <div className="inspector__actions">
+          <button className="inspector__minimize" onClick={onToggleMinimize} aria-label={minimized ? 'Expand' : 'Minimize'}>
+            {minimized ? (
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <polyline points="18,15 12,9 6,15"/>
+              </svg>
+            ) : (
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <polyline points="6,9 12,15 18,9"/>
+              </svg>
+            )}
+          </button>
+          <button className="inspector__close" onClick={onClose}>✕</button>
+        </div>
       </div>
 
       <div className="inspector__body">
